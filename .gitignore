@@ -1,0 +1,20 @@
+# Secrets
+.env
+credentials.json
+token.json
+
+# Données générées par l'app (audio, transcriptions, cours, SQLite)
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# OS / éditeurs
+.DS_Store
+.idea/
+.vscode/

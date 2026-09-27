@@ -1,0 +1,13 @@
+{% from "macros.html" import status_badge, sub_badge %}
+<div class="row" data-busy="{{ 1 if busy else 0 }}" data-status="{{ rec.status }}">
+  <strong>Statut :</strong> {{ status_badge(rec) }}
+  {{ sub_badge('Drive', rec.drive_status, rec.drive_error) }}
+  {{ sub_badge('Notion', rec.notion_status, rec.notion_error) }}
+  {% if busy %}<span class="small muted">⏳ {{ pipeline.describe() or 'en file d\'attente…' }}</span>{% endif %}
+</div>
+{% if rec.status == 'error' and rec.error_message %}
+  <div class="flash err" style="margin:0.6rem 0 0"><strong>Échec — {{ rec.error_step }}</strong> : {{ rec.error_message }}</div>
+{% endif %}
+{% if rec.drive_status == 'skipped' and rec.drive_error %}<p class="small muted">Drive : {{ rec.drive_error }}</p>{% endif %}
+{% if rec.notion_status == 'skipped' and rec.notion_error %}<p class="small muted">Notion : {{ rec.notion_error }}</p>{% endif %}
+{% if rec.state_note %}<p class="flash warn" style="margin:0.6rem 0 0">{{ rec.state_note }}</p>{% endif %}

@@ -1,0 +1,4 @@
+<div class="flash {{ 'ok' if ok else 'err' }}" style="margin:0.4rem 0">{{ message }}</div>
+{% if models %}
+<details><summary class="small">Modèles disponibles</summary><div class="term-list">{% for m in models %}<code>{{ m }}</code>{% endfor %}</div></details>
+{% endif %}
