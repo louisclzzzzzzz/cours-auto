@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}Paramètres{% endblock %}
+{% block content %}
+<h1>Paramètres</h1>
+<div class="grid">
+  <section class="card">
+    <h2>📅 Emploi du temps</h2>
+    <form method="post" action="/parametres/edt">
+      <div class="field"><label>URL d'export ICS (ADE)</label>
+        <input type="url" name="ics_url" value="{{ s.ics_url }}" placeholder="https://ade…/jsp/custom/modules/plannings/anonymous_cal.jsp?…"></div>
+      <div class="field"><label>Fuseau horaire</label><input type="text" name="timezone" value="{{ s.timezone }}"></div>
+      <button class="primary">Enregistrer et rafraîchir</button>
+    </form>
+    <hr>
+    <form method="post" action="/parametres/edt/fichier" enctype="multipart/form-data" class="row">
+      <input type="file" name="file" accept=".ics,text/calendar" required>
+      <button>Importer un fichier .ics</button>
+    </form>
+    <p class="small muted" style="margin-top:0.6rem">
+      {% if has_calendar %}EDT en cache ({{ 'URL' if ics_source == 'url' else 'fichier importé' }}), mis à jour le {{ ics_last[:16]|replace('T', ' à ') }}.
+      {% else %}Aucun emploi du temps en cache.{% endif %}
+      L'app fonctionne hors ligne avec le dernier EDT connu.
+    </p>
+    {% if ics_error %}<p class="small" style="color:var(--warn)">{{ ics_error }}</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>📁 Google Drive</h2>
+    <p>
+      {% if drive_status.connected %}<span class="badge ok">{{ drive_status.message }}</span>
+      {% elif drive_status.configured %}<span class="badge warn">{{ drive_status.message }}</span>
+      {% else %}<span class="badge err">{{ drive_status.message }}</span>{% endif %}
+      <a class="small" href="/parametres?check=1">revérifier</a>
+    </p>
+    <div class="row">
+      {% if drive_status.configured %}
+        <button class="primary" hx-post="/drive/connect" hx-target="#drive-auth">
+          {{ 'Reconnecter' if drive_status.connected else 'Se connecter' }} à Google Drive</button>
+      {% endif %}
+      {% if drive_status.connected %}
+        <form method="post" action="/drive/disconnect" class="inline-form" onsubmit="return confirm('Déconnecter Google Drive ?')"><button>Déconnecter</button></form>
+      {% endif %}
+      {% if drive_root_url %}<a href="{{ drive_root_url }}" target="_blank" rel="noopener">Dossier racine ↗</a>{% endif %}
+    </div>
+    <div id="drive-auth" style="margin-top:0.6rem">{% with auth=drive_auth, links=drive_links %}{% include "partials/drive_auth.html" %}{% endwith %}</div>
+    {% if drive_failed and not drive_status.connected %}
+      <p class="small muted">{{ drive_failed }} séance(s) en attente de publication Drive : elles seront envoyées automatiquement dès la connexion.</p>
+    {% endif %}
+    {% if drive_client_type and drive_client_type != 'installed' %}
+      <p class="flash err small">Votre credentials.json est un client de type « {{ drive_client_type }} » : il faut un client
+        « Application de bureau » (<a href="{{ drive_links.clients }}" target="_blank" rel="noopener">Clients</a>).</p>
+    {% endif %}
+    {% if drive_status.configured %}
+    <details {{ 'open' if not drive_status.connected }} style="margin-top:0.6rem">
+      <summary class="small">Aide à la connexion{% if drive_project %} (projet Google Cloud « {{ drive_project }} »){% endif %}</summary>
+      <ol class="small">
+        <li>La connexion s'ouvre dans votre navigateur habituel (Chrome, Safari…) : Google refuse souvent la connexion dans un navigateur intégré.</li>
+        <li><a href="{{ drive_links.api }}" target="_blank" rel="noopener">API Google Drive</a> : cliquez sur « Activer ».</li>
+        <li><a href="{{ drive_links.audience }}" target="_blank" rel="noopener">Audience</a> : « Publier l'application » (Production).
+          À défaut, ajoutez votre adresse Gmail dans « Utilisateurs test » (l'autorisation expirera alors tous les 7 jours).</li>
+        <li><a href="{{ drive_links.scopes }}" target="_blank" rel="noopener">Accès aux données</a> : ajoutez le scope <code>…/auth/drive.file</code>.</li>
+        <li><a href="{{ drive_links.clients }}" target="_blank" rel="noopener">Clients</a> : type « Application de bureau », JSON enregistré sous <code>credentials.json</code> à la racine du projet.</li>
+        <li>Si Google affiche « Google n'a pas validé cette application », cliquez sur « Continuer » : c'est normal pour une application personnelle.</li>
+      </ol>
+    </details>
+    {% endif %}
+    <hr>
+    <form method="post" action="/parametres/drive">
+      <div class="field"><label>Nom du dossier racine</label><input type="text" name="drive_root_name" value="{{ s.drive_root_name }}"></div>
+      <label class="check"><input type="checkbox" name="drive_notebooklm" value="1" {{ 'checked' if s.drive_notebooklm == '1' }}>
+        Google Doc miroir pour NotebookLM (mis à jour sur le même fichier à chaque séance)</label>
+      <label class="check"><input type="checkbox" name="drive_upload_sources" value="1" {{ 'checked' if s.drive_upload_sources == '1' }}>
+        Envoyer aussi l'audio et la transcription (dossier « Sources »)</label>
+      <button style="margin-top:0.6rem">Enregistrer les options Drive</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>📓 Notion</h2>
+    <p>Jeton d'intégration (<code>NOTION_TOKEN</code> dans .env) :
+      {% if notion_token %}<span class="badge ok">présent</span>{% else %}<span class="badge err">absent</span>{% endif %}</p>
+    <form method="post" action="/parametres/notion">
+      <div class="field"><label>Page racine « Cours M1 » (URL ou ID)</label>
+        <input type="text" name="notion_root" value="{{ s.notion_root }}" placeholder="https://www.notion.so/…"></div>
+      {% if notion_root_id %}<p class="small muted">ID reconnu : <code>{{ notion_root_id }}</code></p>{% endif %}
+      <div class="row">
+        <button class="primary">Enregistrer</button>
+        <button type="button" hx-post="/parametres/notion/test" hx-target="#notion-test">Tester la connexion</button>
+      </div>
+    </form>
+    <div id="notion-test" style="margin-top:0.6rem"></div>
+    <div class="links" style="margin-top:0.6rem">
+      {% if notion_urls.matieres %}<a href="{{ notion_urls.matieres }}" target="_blank" rel="noopener">Base « Matières »</a>{% endif %}
+      {% if notion_urls.seances %}<a href="{{ notion_urls.seances }}" target="_blank" rel="noopener">Base « Séances »</a>{% endif %}
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>🤖 Mistral</h2>
+    <p>Clé API (<code>MISTRAL_API_KEY</code> dans .env) :
+      {% if mistral_key %}<span class="badge ok">présente</span>{% else %}<span class="badge err">absente</span>{% endif %}
+      <button type="button" hx-post="/parametres/mistral/test" hx-target="#mistral-test">Tester la clé</button></p>
+    <div id="mistral-test"></div>
+    <form method="post" action="/parametres/modeles">
+      <div class="field"><label>Modèle de mise en forme (LLM)</label>
+        <input type="text" name="llm_model" value="{{ s.llm_model }}" list="models"></div>
+      <div class="field"><label>Modèle de transcription</label>
+        <input type="text" name="transcription_model" value="{{ s.transcription_model }}" list="models"></div>
+      <datalist id="models">
+        <option value="mistral-small-2603" label="Mistral Small 4"><option value="mistral-small-latest">
+        <option value="mistral-medium-latest"><option value="mistral-large-latest">
+        <option value="voxtral-mini-latest">
+      </datalist>
+      <div class="row">
+        <div class="field"><label>Langue</label><input type="text" name="transcription_language" value="{{ s.transcription_language }}" style="width:5rem"></div>
+        <div class="field"><label>Débit MP3</label><input type="text" name="audio_bitrate" value="{{ s.audio_bitrate }}" style="width:5rem"></div>
+      </div>
+      <details><summary class="small">Réglages avancés</summary>
+        <div class="field"><label>Taille max d'un bloc de transcription envoyé au LLM (caractères)</label>
+          <input type="number" name="llm_chunk_chars" value="{{ s.llm_chunk_chars }}" min="5000" step="1000"></div>
+        <div class="field"><label>max_tokens par appel</label>
+          <input type="number" name="llm_max_tokens" value="{{ s.llm_max_tokens }}" min="2000" step="1000"></div>
+        <div class="field"><label>Raisonnement (<code>reasoning_effort</code>, modèles qui le proposent comme Small 4)</label>
+          <select name="llm_reasoning_effort">
+            {% for value, label in [('high', 'high — le modèle réfléchit avant de rédiger (par défaut ; plus lent, plus de tokens)'), ('none', 'none — réponse directe, sans réflexion'), ('', 'ne pas envoyer le paramètre')] %}
+              <option value="{{ value }}" {{ 'selected' if s.llm_reasoning_effort == value }}>{{ label }}</option>
+            {% endfor %}
+          </select></div>
+      </details>
+      <button style="margin-top:0.6rem">Enregistrer</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Divers</h2>
+    <form method="post" action="/parametres/rappel"><button>Réafficher le rappel « accord de l'enseignant »</button></form>
+    <p class="small muted" style="margin-top:0.6rem">Données locales : <code>data/</code> (audio, transcriptions, cours, états, base SQLite).
+      Prompts modifiables : <code>prompts/format_course.md</code>, <code>prompts/update_state.md</code>.</p>
+  </section>
+</div>
+{% endblock %}

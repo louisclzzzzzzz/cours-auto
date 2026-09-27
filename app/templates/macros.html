@@ -1,0 +1,29 @@
+{% macro status_badge(rec) -%}
+{%- set s = rec.status -%}
+{%- set cls = 'ok' if s == 'done' else 'err' if s == 'error' else 'warn' if s == 'interrupted'
+    else 'busy' if s in ('recording', 'finalizing', 'transcribing', 'formatting', 'publishing') else '' -%}
+<span class="badge {{ cls }}"
+      {% if s == 'error' %}title="{{ rec.error_step or '' }} : {{ rec.error_message or '' }}"{% endif %}>
+  {{- s|status_label -}}{% if s == 'error' and rec.error_step %} ({{ rec.error_step }}){% endif -%}
+</span>
+{%- endmacro %}
+
+{% macro sub_badge(name, status, error) -%}
+{%- set cls = 'ok' if status == 'done' else 'err' if status == 'error' else 'busy' if status == 'running' else '' -%}
+<span class="badge {{ cls }}" title="{{ error or '' }}">{{ name }} : {{ status|sub_label }}</span>
+{%- endmacro %}
+
+{% macro pub_badges(rec) -%}
+{%- if rec.status in ('publishing', 'done', 'error', 'formatted') and (rec.drive_status != 'pending' or rec.notion_status != 'pending') -%}
+  {{ sub_badge('Drive', rec.drive_status, rec.drive_error) }} {{ sub_badge('Notion', rec.notion_status, rec.notion_error) }}
+{%- endif -%}
+{%- endmacro %}
+
+{% macro session_name(rec) -%}
+{{ rec.course_type }} {{ rec.session_number }}{% if rec.title %} – {{ rec.title }}{% endif %}
+{%- endmacro %}
+
+{% macro markdown(md, id='') -%}
+<textarea class="md-source" {% if id %}id="{{ id }}-src"{% endif %} hidden>{{ md }}</textarea>
+<div class="md" data-md-render {% if id %}id="{{ id }}"{% endif %}></div>
+{%- endmacro %}

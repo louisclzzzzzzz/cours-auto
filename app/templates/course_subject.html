@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% from "macros.html" import session_name, status_badge %}
+{% block title %}{{ subject.name }}{% endblock %}
+{% block content %}
+<p class="muted small"><a href="/cours">← Cours</a></p>
+<div class="row spread">
+  <h1>{{ subject.name }}</h1>
+  <div class="row">
+    <form method="post" action="/cours/{{ subject.id }}/annotations" class="inline-form"
+          onsubmit="return confirm('Importer les annotations Notion de toutes les séances de cette matière ?')">
+      <button>📥 Importer mes annotations Notion (toute la matière)</button>
+    </form>
+    <form method="post" action="/cours/{{ subject.id }}/drive" class="inline-form">
+      <button title="Régénère le cours complet, _etat.md et le Google Doc NotebookLM">⟳ Régénérer sur Drive</button>
+    </form>
+  </div>
+</div>
+<div class="links card">
+  {% if subject.notion_page_url %}<a href="{{ subject.notion_page_url }}" target="_blank" rel="noopener">Page Notion de la matière</a>{% endif %}
+  {% if subject.drive_folder_url %}<a href="{{ subject.drive_folder_url }}" target="_blank" rel="noopener">Dossier Drive</a>{% endif %}
+  {% if subject.drive_full_url %}<a href="{{ subject.drive_full_url }}" target="_blank" rel="noopener">Cours complet (Drive)</a>{% endif %}
+  {% if subject.drive_gdoc_url %}<a href="{{ subject.drive_gdoc_url }}" target="_blank" rel="noopener">Google Doc NotebookLM</a>{% endif %}
+  <a class="internal" href="/cours/{{ subject.id }}/complet">Aperçu du cours complet</a>
+  <a class="internal" href="/matieres/{{ subject.id }}">Matière (vocabulaire, état)</a>
+</div>
+
+<div class="grid-2">
+  <section class="card">
+    <h2>Séances</h2>
+    <ul class="session-list">
+      {% for r in sessions %}
+      <li class="{{ 'active' if selected and r.id == selected.id }}">
+        <a class="title" href="/cours/{{ subject.id }}?seance={{ r.id }}"
+           hx-get="/fragments/cours/seance/{{ r.id }}" hx-target="#preview" hx-push-url="/cours/{{ subject.id }}?seance={{ r.id }}"
+           onclick="document.querySelectorAll('.session-list li').forEach(li => li.classList.remove('active')); this.parentElement.classList.add('active');">
+          {{ session_name(r) }}</a>
+        <div class="small muted">{{ r.session_date|fr_date }} {% if r.annotated %}· <span class="badge ok">annotée</span>{% endif %}</div>
+        <div class="links small">
+          {% if r.notion_page_url %}<a href="{{ r.notion_page_url }}" target="_blank" rel="noopener">Ouvrir dans Notion</a>{% endif %}
+          {% if r.drive_md_url %}<a href="{{ r.drive_md_url }}" target="_blank" rel="noopener">Fichier Drive</a>{% endif %}
+        </div>
+      </li>
+      {% else %}
+      <li class="muted">Aucune séance mise en forme pour l'instant.</li>
+      {% endfor %}
+    </ul>
+    {% if others %}
+      <h3 style="margin-top:1rem">En cours de traitement</h3>
+      <ul class="session-list">
+        {% for r in others %}<li><a href="/enregistrements/{{ r.id }}">{{ session_name(r) }}</a> {{ status_badge(r) }}</li>{% endfor %}
+      </ul>
+    {% endif %}
+  </section>
+
+  <section class="card" id="preview">
+    {% if selected %}
+      {% with rec=selected %}
+        {% include "partials/session_preview_loader.html" %}
+      {% endwith %}
+    {% else %}
+      <p class="muted">Sélectionnez une séance pour l'afficher.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

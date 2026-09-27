@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% from "macros.html" import status_badge %}
+{% block title %}Enregistrer{% endblock %}
+{% block content %}
+
+{% if consent %}
+<div class="card banner" id="consent">
+  <div class="row spread">
+    <p>🤝 <strong>Rappel :</strong> demandez l'accord de l'enseignant avant d'enregistrer un cours.</p>
+    <button hx-post="/consent/dismiss" hx-target="#consent" hx-swap="outerHTML">Compris, ne plus afficher</button>
+  </div>
+</div>
+{% endif %}
+
+{% for a in active %}
+<div class="card banner {{ 'danger' if a.status == 'interrupted' }}" data-active-recording="{{ a.id }}">
+  <div class="row spread">
+    <div>
+      <strong>{{ 'Enregistrement interrompu' if a.status == 'interrupted' else 'Enregistrement actif' }}</strong> :
+      {{ a.subject_name }} — {{ a.course_type }} {{ a.session_number }}
+      <span class="muted small">
+        ({{ a.chunks }} morceau(x) reçus, {{ a.elapsed_seconds|duration }} enregistrées
+        {%- if a.idle_seconds is not none %}, dernier signal il y a {{ a.idle_seconds|int }} s{% endif %})
+      </span>
+      {% if a.status == 'recording' and a.idle_seconds is not none and a.idle_seconds < 60 %}
+      <p class="small muted">Des données arrivent encore : si cet enregistrement tourne dans un autre onglet, continuez-le là-bas plutôt que de le reprendre ici.</p>
+      {% endif %}
+    </div>
+    <div class="row">
+      <button class="primary" data-resume="{{ a.id }}">⏺ Reprendre l'enregistrement</button>
+      <button data-finalize="{{ a.id }}">Finaliser tel quel</button>
+      <a class="btn" href="/enregistrements/{{ a.id }}">Détails</a>
+    </div>
+  </div>
+</div>
+{% endfor %}
+
+<div class="grid">
+  <section class="card">
+    <h2>Cours à enregistrer</h2>
+    <div id="slots">{% include "partials/slots.html" %}</div>
+    <div class="slot" data-slot-card>
+      <input type="radio" name="slot" value="manual" id="slot-manual">
+      <div class="slot-body">
+        <label for="slot-manual" class="slot-title">Hors emploi du temps</label>
+        <div class="slot-subject">
+          <select id="manual-subject">
+            <option value="">— Matière —</option>
+            {% for s in subjects %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
+            <option value="new">➕ Nouvelle matière…</option>
+          </select>
+          <input type="text" id="manual-new-subject" class="hidden" placeholder="Nom de la nouvelle matière">
+          <select id="manual-type">{% for t in COURSE_TYPES %}<option>{{ t }}</option>{% endfor %}</select>
+        </div>
+        <div class="slot-subject">
+          <input type="text" id="manual-teacher" placeholder="Enseignant (facultatif)">
+          <input type="date" id="manual-date" value="{{ today.isoformat() }}">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card recorder" id="recorder">
+    <h2><span class="rec-dot"></span>Enregistrement</h2>
+    <div class="selection" id="selection-summary">Aucun cours sélectionné.</div>
+    <div class="field" style="margin-top:0.8rem">
+      <label for="device">Micro</label>
+      <div class="row">
+        <select id="device" style="flex:1"><option value="">Micro par défaut</option></select>
+        <button id="btn-test-mic" type="button" title="Autoriser le micro et afficher le niveau">🎚 Tester</button>
+      </div>
+    </div>
+    <div class="vumeter" aria-label="Niveau du micro"><div id="vu-bar"></div></div>
+    <div class="chrono" id="chrono">00:00:00</div>
+    <div class="rec-buttons">
+      <button class="primary" id="btn-start">⏺ Démarrer</button>
+      <button id="btn-pause" disabled>⏸ Pause</button>
+      <button id="btn-resume" disabled>▶ Reprendre</button>
+      <button class="danger" id="btn-stop" disabled>⏹ Arrêter</button>
+    </div>
+    <p class="small muted" id="rec-status">Prêt.</p>
+    <p class="small muted">Les morceaux sont envoyés au serveur toutes les 30 s : en cas de fermeture de l'onglet ou de veille,
+      tout ce qui a été reçu est conservé et l'enregistrement peut être repris ou finalisé.</p>
+
+    <div class="import-audio" id="import">
+      <h3>📁 Ou importer un fichier audio</h3>
+      <p class="small muted">Enregistrement fait avec un autre appareil (téléphone, dictaphone…) : il est rattaché au cours
+        sélectionné ci-contre puis traité comme un enregistrement (transcription, mise en forme, publication).</p>
+      <div class="row">
+        <input type="file" id="import-file" style="flex:1; min-width:0"
+               accept="audio/*,video/*,.mp3,.m4a,.wav,.ogg,.opus,.webm,.flac,.aac,.mp4,.mov,.amr,.3gp">
+        <button id="btn-import" type="button">Importer et traiter</button>
+      </div>
+      <progress id="import-progress" max="100" value="0" class="hidden"></progress>
+      <p class="small muted" id="import-status"></p>
+    </div>
+  </section>
+</div>
+
+<section class="card">
+  <div class="row spread"><h2>Derniers traitements</h2><a href="/enregistrements">Tout voir →</a></div>
+  <div id="latest" hx-get="/fragments/latest" hx-trigger="load, every 4s, refresh-latest from:body" hx-swap="innerHTML">
+    <p class="muted">Chargement…</p>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}<script src="/static/recorder.js" defer></script>{% endblock %}

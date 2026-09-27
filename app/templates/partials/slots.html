@@ -1,0 +1,72 @@
+<div class="daynav">
+  <button type="button" hx-get="/fragments/slots?day={{ prev_day.isoformat() }}" hx-target="#slots" title="Jour précédent">←</button>
+  <input type="date" name="day" value="{{ day.isoformat() }}" hx-get="/fragments/slots" hx-target="#slots" hx-trigger="change">
+  <button type="button" hx-get="/fragments/slots?day={{ next_day.isoformat() }}" hx-target="#slots" title="Jour suivant">→</button>
+  {% if day != today %}<button type="button" hx-get="/fragments/slots" hx-target="#slots">Aujourd'hui</button>{% endif %}
+  <button type="button" class="right" hx-post="/calendar/refresh" hx-target="#slots"
+          hx-vals='{"day": "{{ day.isoformat() }}"}' title="Recharger l'emploi du temps depuis l'URL ADE">⟳ EDT</button>
+</div>
+<p class="small muted">
+  {{ day|fr_date }}
+  {% if ics.last_refresh %}· EDT mis à jour le {{ ics.last_refresh[:16]|replace('T', ' à ') }}{% endif %}
+</p>
+{% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+{% if ics.error %}<p class="small" style="color:var(--warn)">{{ ics.error }}</p>{% endif %}
+{% if not ics.has_cache %}
+  <p class="notice">Aucun emploi du temps : renseignez l'URL ICS ADE ou importez un fichier .ics dans
+    <a href="/parametres">Paramètres</a>. Vous pouvez aussi enregistrer « hors emploi du temps » ci-dessous.</p>
+{% endif %}
+
+{% for s in slots %}
+<div class="slot {{ 'selected' if s.is_current }}" data-slot-card>
+  <input type="radio" name="slot" id="slot-{{ loop.index }}" value="{{ s.key }}" {{ 'checked' if s.is_current }}
+         data-subject-id="{{ s.subject_id or '' }}" data-subject-name="{{ s.subject_name or '' }}"
+         data-teacher="{{ s.teacher }}" data-summary="{{ s.summary }}" data-uid="{{ s.uid }}"
+         data-start="{{ s.start.isoformat() }}" data-end="{{ s.end.isoformat() }}"
+         data-location="{{ s.location }}" data-date="{{ s.start.date().isoformat() }}">
+  <div class="slot-body">
+    <label for="slot-{{ loop.index }}">
+      <span class="slot-time">{{ s.start|hhmm }} – {{ s.end|hhmm }}</span>
+      {% if s.is_current and day == today %}<span class="tag">· en cours</span>{% endif %}
+      <div class="slot-title">{{ s.summary }}</div>
+    </label>
+    <div class="slot-meta">{{ s.location or 'salle ?' }}{% if s.teacher %} · {{ s.teacher }}{% endif %}</div>
+    <div class="slot-subject">
+      {% if s.subject_id %}
+        <span>📚 <strong>{{ s.subject_name }}</strong></span>
+      {% else %}
+        <span class="badge warn">Intitulé non associé à une matière</span>
+      {% endif %}
+      <select class="slot-type" title="Type de séance (déduit de l'intitulé, modifiable)">
+        {% for t in COURSE_TYPES %}<option {{ 'selected' if (s.course_type or 'CM') == t }}>{{ t }}</option>{% endfor %}
+      </select>
+      {% if not s.course_type %}<span class="small muted">(type non détecté)</span>{% endif %}
+    </div>
+    {% if not s.subject_id %}
+    <form class="quick-map" hx-post="/subjects/quick-map" hx-target="#slots">
+      <input type="hidden" name="summary" value="{{ s.summary }}">
+      <input type="hidden" name="day" value="{{ day.isoformat() }}">
+      <input type="hidden" name="selected" value="{{ s.key }}">
+      <input type="hidden" name="teacher" value="{{ s.teacher }}">
+      <div class="row">
+        <select name="subject_id" aria-label="Matière">
+          <option value="new">➕ Créer la matière…</option>
+          {% for sub in subjects %}<option value="{{ sub.id }}">Associer à « {{ sub.name }} »</option>{% endfor %}
+        </select>
+        <input type="text" name="new_name" value="{{ s.suggested_name }}" placeholder="Nom de la matière">
+      </div>
+      <div class="row">
+        <select name="match" aria-label="Règle">
+          <option value="exact">Cet intitulé exact</option>
+          <option value="regex">Expression régulière</option>
+        </select>
+        <input type="text" name="pattern" class="hidden" value="{{ s.suggested_name }}" placeholder="Expression régulière">
+        <button class="primary">Associer</button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+  {% if ics.has_cache %}<p class="muted">Aucun créneau ce jour-là.</p>{% endif %}
+{% endfor %}

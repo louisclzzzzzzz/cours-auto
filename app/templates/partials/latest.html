@@ -1,0 +1,14 @@
+{% from "macros.html" import status_badge, pub_badges %}
+{% for r in recs %}
+<div class="row" style="padding:0.35rem 0; border-bottom:1px solid var(--border)">
+  <a href="/enregistrements/{{ r.id }}"><strong>{{ r.subject_name or 'Sans matière' }}</strong>
+    — {{ r.course_type }} {{ r.session_number }}{% if r.title %} · {{ r.title }}{% endif %}</a>
+  <span class="small muted">{{ r.session_date|fr_short_date }}</span>
+  <span class="right row">{{ status_badge(r) }} {{ pub_badges(r) }}</span>
+</div>
+{% if pipeline.current and pipeline.current.get('recording_id') == r.id %}
+  <p class="small muted" style="margin:0.2rem 0 0.4rem">⏳ {{ pipeline.describe() }}</p>
+{% endif %}
+{% else %}
+<p class="muted">Aucun enregistrement pour l'instant.</p>
+{% endfor %}

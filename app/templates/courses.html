@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% from "macros.html" import session_name %}
+{% block title %}Cours{% endblock %}
+{% block content %}
+<div class="row spread">
+  <h1>Cours</h1>
+  <div class="links">
+    {% if notion_seances_url %}<a href="{{ notion_seances_url }}" target="_blank" rel="noopener">Base « Séances » (Notion)</a>{% endif %}
+    {% if drive_root_url %}<a href="{{ drive_root_url }}" target="_blank" rel="noopener">Dossier Drive « Cours M1 »</a>{% endif %}
+  </div>
+</div>
+<div class="grid">
+  {% for s in rows %}
+  <section class="card">
+    <div class="row spread">
+      <h2><a href="/cours/{{ s.id }}">{{ s.name }}</a></h2>
+      <span class="badge">{{ s.n_sessions }} séance(s)</span>
+    </div>
+    {% if s.teachers %}<p class="small muted">{{ s.teachers }}</p>{% endif %}
+    {% if s.last %}<p class="small">Dernière : <a href="/cours/{{ s.id }}?seance={{ s.last.id }}">{{ session_name(s.last) }}</a> ({{ s.last.session_date|fr_short_date }})</p>{% endif %}
+    {% if s.n_annotated %}<p class="small muted">{{ s.n_annotated }} séance(s) avec annotations importées</p>{% endif %}
+    <div class="links" style="margin-top:0.5rem">
+      {% if s.notion_page_url %}<a href="{{ s.notion_page_url }}" target="_blank" rel="noopener">Notion</a>{% endif %}
+      {% if s.drive_folder_url %}<a href="{{ s.drive_folder_url }}" target="_blank" rel="noopener">Dossier Drive</a>{% endif %}
+      {% if s.drive_full_url %}<a href="{{ s.drive_full_url }}" target="_blank" rel="noopener">Cours complet</a>{% endif %}
+      {% if s.drive_gdoc_url %}<a href="{{ s.drive_gdoc_url }}" target="_blank" rel="noopener">Google Doc NotebookLM</a>{% endif %}
+    </div>
+  </section>
+  {% else %}
+  <p class="muted">Aucune matière. Elles sont créées depuis la page <a href="/">Enregistrer</a> ou <a href="/matieres">Matières</a>.</p>
+  {% endfor %}
+</div>
+{% endblock %}

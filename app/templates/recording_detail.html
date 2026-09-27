@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% from "macros.html" import markdown, session_name %}
+{% block title %}{{ session_name(rec) }}{% endblock %}
+{% block content %}
+<div class="row spread">
+  <div>
+    <p class="muted small"><a href="/enregistrements">← Enregistrements</a></p>
+    <h1>{{ rec.subject_name or 'Sans matière' }} — {{ session_name(rec) }}</h1>
+    <p class="muted">{{ rec.session_date|fr_date }}{% if rec.teacher %} · {{ rec.teacher }}{% endif %}
+      · {{ (rec.duration_seconds or rec.elapsed_seconds)|duration }}
+      {% if rec.event_summary %}· <span title="Intitulé ADE">{{ rec.event_summary }}</span>{% endif %}
+      {% if rec.origin == 'import' %}· 📁 importé : {{ rec.source_filename }}{% endif %}</p>
+  </div>
+  <div class="links">
+    {% if rec.notion_page_url %}<a href="{{ rec.notion_page_url }}" target="_blank" rel="noopener">Ouvrir dans Notion</a>{% endif %}
+    {% if rec.drive_md_url %}<a href="{{ rec.drive_md_url }}" target="_blank" rel="noopener">Fichier Drive</a>{% endif %}
+    {% if rec.drive_annot_url %}<a href="{{ rec.drive_annot_url }}" target="_blank" rel="noopener">Fichier annoté (Drive)</a>{% endif %}
+    {% if files.course %}<a class="internal" href="/cours/{{ rec.subject_id }}?seance={{ rec.id }}">Voir dans Cours</a>{% endif %}
+  </div>
+</div>
+
+<div class="card" hx-get="/fragments/recording/{{ rec.id }}/status" hx-trigger="every 3s" hx-swap="innerHTML">
+  {% include "partials/recording_status.html" %}
+</div>
+
+<div class="grid">
+  <section class="card">
+    <h2>Audio</h2>
+    {% if files.audio %}
+      <audio controls preload="none" src="/enregistrements/{{ rec.id }}/audio" style="width:100%"></audio>
+    {% elif rec.origin == 'import' %}
+      <p class="muted">Audio final pas encore produit — fichier importé : {{ rec.source_filename }}.</p>
+    {% else %}
+      <p class="muted">Audio final pas encore produit — {{ files.chunks.n }} morceau(x) reçu(s)
+        ({{ (files.chunks.total / 1048576)|round(1) }} Mo), {{ rec.segment_count }} segment(s).</p>
+    {% endif %}
+    <h3 style="margin-top:1rem">Relancer une étape</h3>
+    <p class="small muted">Chaque étape repart des fichiers conservés sur le disque ; les étapes suivantes sont enchaînées.</p>
+    <div class="stack">
+      <form method="post" action="/enregistrements/{{ rec.id }}/action" class="row">
+        <input type="hidden" name="action" value="finalize">
+        <button {{ 'disabled' if busy or not (files.chunks.n or files.source) }}>🎧
+          {%- if rec.status == 'interrupted' %} Finaliser tel quel
+          {%- elif not files.chunks.n and files.source %} Refaire la conversion audio
+          {%- else %} Refaire l'assemblage audio{% endif %}</button>
+      </form>
+      <form method="post" action="/enregistrements/{{ rec.id }}/action" class="row">
+        <input type="hidden" name="action" value="transcribe">
+        <button {{ 'disabled' if busy or not files.audio }}>📝 Relancer la transcription</button>
+      </form>
+      <form method="post" action="/enregistrements/{{ rec.id }}/action" class="stack"
+            {% if rec.notion_page_id %}onsubmit="return this.notion_mode.value !== 'overwrite' || confirm('Écraser la page Notion ? Toutes vos annotations sur cette page seront PERDUES.')"{% endif %}>
+        <input type="hidden" name="action" value="format">
+        <button {{ 'disabled' if busy or not files.transcript }}>✍️ Relancer la mise en forme</button>
+        {% if rec.notion_page_id %}
+        <div class="notice small">
+          Cette séance est déjà publiée dans Notion (vous l'avez peut-être annotée). Pour la nouvelle version :<br>
+          <label class="check"><input type="radio" name="notion_mode" value="new_version" checked> créer une nouvelle page « (v{{ (rec.notion_version or 1) + 1 }}) » et conserver l'ancienne (recommandé)</label>
+          <label class="check"><input type="radio" name="notion_mode" value="overwrite"> ⚠️ écraser la page existante (annotations perdues)</label>
+        </div>
+        {% endif %}
+      </form>
+      <form method="post" action="/enregistrements/{{ rec.id }}/action" class="row">
+        <input type="hidden" name="action" value="state">
+        <button {{ 'disabled' if busy or not files.course }}>🧠 Relancer la mise à jour de l'état de matière</button>
+      </form>
+      <div class="row">
+        {% for action, label in [('publish', 'Publier (Drive + Notion)'), ('publish_drive', 'Publier sur Drive'), ('publish_notion', 'Publier sur Notion')] %}
+        <form method="post" action="/enregistrements/{{ rec.id }}/action" class="inline-form">
+          <input type="hidden" name="action" value="{{ action }}">
+          <button {{ 'disabled' if busy or not files.course }}>{{ label }}</button>
+        </form>
+        {% endfor %}
+      </div>
+      {% if rec.notion_page_id %}
+      <form method="post" action="/enregistrements/{{ rec.id }}/action" class="row">
+        <input type="hidden" name="action" value="import_annotations">
+        <button {{ 'disabled' if busy }}>📥 Importer mes annotations Notion</button>
+        {% if rec.annotations_imported_at %}<span class="small muted">dernier import : {{ rec.annotations_imported_at[:16]|replace('T', ' ') }}</span>{% endif %}
+      </form>
+      {% endif %}
+    </div>
+    {% if old_pages %}
+      <h3 style="margin-top:1rem">Anciennes versions Notion (conservées)</h3>
+      <ul>{% for p in old_pages %}<li><a href="{{ p.url }}" target="_blank" rel="noopener">Version v{{ p.version }}</a></li>{% endfor %}</ul>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Informations de la séance</h2>
+    <form method="post" action="/enregistrements/{{ rec.id }}/metadata">
+      <div class="field"><label>Matière</label>
+        <select name="subject_id">{% for s in subjects_list %}<option value="{{ s.id }}" {{ 'selected' if s.id == rec.subject_id }}>{{ s.name }}</option>{% endfor %}</select></div>
+      <div class="row">
+        <div class="field"><label>Type</label>
+          <select name="course_type">{% for t in COURSE_TYPES %}<option {{ 'selected' if t == rec.course_type }}>{{ t }}</option>{% endfor %}</select></div>
+        <div class="field"><label>Numéro</label><input type="number" name="session_number" min="1" value="{{ rec.session_number or 1 }}" style="width:6rem"></div>
+        <div class="field"><label>Date</label><input type="date" name="session_date" value="{{ rec.session_date }}"></div>
+      </div>
+      <div class="field"><label>Titre court</label><input type="text" name="title" value="{{ rec.title or '' }}"></div>
+      <div class="field"><label>Enseignant</label><input type="text" name="teacher" value="{{ rec.teacher or '' }}"></div>
+      <button>Enregistrer les informations</button>
+    </form>
+    <hr>
+    <form method="post" action="/enregistrements/{{ rec.id }}/delete"
+          onsubmit="return confirm('Supprimer définitivement cet enregistrement et ses fichiers locaux (audio, transcription, cours) ? Les pages Notion et fichiers Drive déjà publiés ne seront pas supprimés.')">
+      <button class="danger" {{ 'disabled' if busy }}>🗑 Supprimer l'enregistrement</button>
+    </form>
+  </section>
+</div>
+
+{% if course %}
+<section class="card">
+  <div class="row spread">
+    <h2>Cours généré</h2>
+    <div class="row">
+      <a class="btn" href="/enregistrements/{{ rec.id }}/cours.md" target="_blank">Markdown brut</a>
+      {% if annotated %}<a class="btn" href="/enregistrements/{{ rec.id }}/cours.md?annote=1" target="_blank">Version annotée</a>{% endif %}
+    </div>
+  </div>
+  {{ markdown(annotated or course) }}
+</section>
+{% endif %}
+
+{% if transcript %}
+<section class="card">
+  <details>
+    <summary>Transcription <a class="small" href="/enregistrements/{{ rec.id }}/transcription.txt" target="_blank">(texte brut)</a></summary>
+    <pre class="transcript">{{ transcript }}</pre>
+  </details>
+</section>
+{% endif %}
+
+<section class="card">
+  <details>
+    <summary>Journal ({{ logs|length }})</summary>
+    <div class="logs">
+      {% for l in logs %}<div class="{{ l.level }}">{{ l.created_at[5:19]|replace('T', ' ') }} · {{ l.message }}</div>{% endfor %}
+    </div>
+  </details>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Recharge la page quand un traitement se termine (boutons, cours et transcription à jour).
+  document.addEventListener("htmx:afterSwap", (e) => {
+    const flag = e.detail.target.querySelector("[data-busy]");
+    if (flag && {{ 1 if busy else 0 }} === 1 && flag.dataset.busy === "0") location.reload();
+  });
+</script>
+{% endblock %}
