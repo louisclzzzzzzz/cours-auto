@@ -6,11 +6,17 @@ identifiants (dossiers, fichiers) sont stockés en base.
 
 from __future__ import annotations
 
+import html
 import io
+import json
 import logging
 import os
 import threading
 import time
+import webbrowser
+import wsgiref.simple_server
+from typing import Callable
+from urllib.parse import parse_qs
 
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
@@ -39,10 +45,19 @@ class DriveAuthError(RuntimeError):
 
 
 # --- Authentification -----------------------------------------------------------------------------
+#
+# Flux « application de bureau » recommandé par Google : la page de connexion s'ouvre dans le navigateur
+# habituel de l'utilisateur (Google refuse souvent la connexion dans les navigateurs intégrés) et un
+# serveur temporaire sur 127.0.0.1 (port libre) reçoit la redirection contenant l'autorisation.
 
-_flows: dict[str, Flow] = {}
-_flows_lock = threading.Lock()
+AUTH_TIMEOUT_S = 300
 _status_cache: dict = {"at": 0.0, "value": None}
+_auth_lock = threading.Lock()
+_auth: dict = {}  # connexion en cours : status (waiting|done|error), url, message, started, browser_opened
+
+_CALLBACK_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Cours auto</title></head>
+<body style="font-family:system-ui,sans-serif;max-width:34rem;margin:4rem auto;line-height:1.5;padding:0 1rem">
+<h2>{title}</h2><p>{message}</p><p><a href="http://127.0.0.1:{port}/parametres">Revenir à Cours auto</a></p></body></html>"""
 
 
 def is_configured() -> bool:
@@ -81,29 +96,166 @@ def load_credentials() -> Credentials:
     return creds
 
 
-def start_auth(redirect_uri: str) -> str:
+def _client_config() -> dict:
+    try:
+        return json.loads(config.CREDENTIALS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def client_type() -> str | None:
+    """« installed » (application de bureau, attendu) ou « web »."""
+    data = _client_config()
+    return next((k for k in ("installed", "web") if k in data), None)
+
+
+def project_id() -> str | None:
+    data = _client_config()
+    return (data.get("installed") or data.get("web") or {}).get("project_id")
+
+
+def console_links() -> dict:
+    """Pages utiles de la console Google Cloud, pour le projet de credentials.json."""
+    pid = project_id()
+    q = f"?project={pid}" if pid else ""
+    return {
+        "api": f"https://console.cloud.google.com/apis/library/drive.googleapis.com{q}",
+        "audience": f"https://console.cloud.google.com/auth/audience{q}",
+        "scopes": f"https://console.cloud.google.com/auth/scopes{q}",
+        "clients": f"https://console.cloud.google.com/auth/clients{q}",
+    }
+
+
+def explain_oauth_error(error: str, description: str = "") -> str:
+    if error == "access_denied":
+        return (
+            "Google a refusé l'accès. Si vous n'avez pas cliqué sur « Annuler », l'application OAuth est "
+            "probablement en mode « Test » sans votre adresse parmi les utilisateurs test : publiez-la en "
+            "Production (recommandé) ou ajoutez votre adresse dans « Audience », puis recommencez."
+        )
+    return f"Google a renvoyé l'erreur « {error} »" + (f" : {description}" if description else "") + "."
+
+
+class _CallbackApp:
+    """Mini-application WSGI qui reçoit la redirection de Google (code d'autorisation ou erreur)."""
+
+    def __init__(self) -> None:
+        self.query: dict | None = None
+
+    def __call__(self, environ, start_response):
+        q = {k: v[0] for k, v in parse_qs(environ.get("QUERY_STRING", "")).items()}
+        if "code" not in q and "error" not in q:  # favicon, etc.
+            start_response("404 Not Found", [("Content-Type", "text/plain")])
+            return [b""]
+        self.query = q
+        if "code" in q:
+            title, message = "✅ Connexion à Google Drive réussie", "Vous pouvez fermer cet onglet et revenir à Cours auto."
+        else:
+            title, message = "❌ Connexion refusée", html.escape(explain_oauth_error(q["error"], q.get("error_description", "")))
+        body = _CALLBACK_PAGE.format(title=title, message=message, port=config.PORT)
+        start_response("200 OK", [("Content-Type", "text/html; charset=utf-8")])
+        return [body.encode("utf-8")]
+
+
+class _QuietHandler(wsgiref.simple_server.WSGIRequestHandler):
+    def log_message(self, *args) -> None:  # pas de journal par requête
+        pass
+
+
+def auth_session() -> dict:
+    with _auth_lock:
+        return dict(_auth)
+
+
+def clear_auth_session() -> None:
+    with _auth_lock:
+        if _auth.get("status") != "waiting":
+            _auth.clear()
+
+
+def cancel_browser_auth() -> None:
+    with _auth_lock:
+        if _auth.get("status") == "waiting":
+            _auth["cancelled"] = True
+
+
+def _open_browser(url: str) -> bool:
+    try:
+        return bool(webbrowser.open(url, new=1, autoraise=True))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def start_browser_auth(open_browser: bool = True, on_success: Callable[[], None] | None = None) -> dict:
+    """Lance la connexion : ouvre la page Google dans le navigateur par défaut et attend la redirection
+    en tâche de fond (AUTH_TIMEOUT_S). Renvoie l'état de la connexion (voir `auth_session`)."""
     if not is_configured():
         raise PublishSkipped("credentials.json absent : voir le README pour le créer.")
-    flow = Flow.from_client_secrets_file(str(config.CREDENTIALS_FILE), scopes=SCOPES, redirect_uri=redirect_uri)
+    with _auth_lock:
+        if (_auth.get("status") == "waiting" and not _auth.get("cancelled")
+                and time.time() - _auth["started"] < AUTH_TIMEOUT_S):
+            url = _auth["url"]  # connexion déjà en cours : on rouvre simplement la page Google
+        else:
+            url = None
+    if url:
+        if open_browser:
+            _open_browser(url)
+        return auth_session()
+
+    flow = Flow.from_client_secrets_file(str(config.CREDENTIALS_FILE), scopes=SCOPES)
+    app = _CallbackApp()
+    server = wsgiref.simple_server.make_server("127.0.0.1", 0, app, handler_class=_QuietHandler)
+    flow.redirect_uri = f"http://127.0.0.1:{server.server_port}/"
     url, state = flow.authorization_url(access_type="offline", prompt="consent")
-    with _flows_lock:
-        _flows[state] = flow
-    return url
+    with _auth_lock:
+        _auth.clear()
+        _auth.update(status="waiting", url=url, message="", started=time.time(), browser_opened=False)
 
+    def wait_for_google() -> None:
+        status, message = "error", "Échec de la connexion."
+        try:
+            server.timeout = 1
+            deadline = time.time() + AUTH_TIMEOUT_S
+            while app.query is None and time.time() < deadline and not _auth.get("cancelled"):
+                server.handle_request()
+            q = app.query
+            if q is None and _auth.get("cancelled"):
+                message = "Connexion annulée."
+            elif q is None:
+                # Google n'a pas renvoyé vers l'app : c'est le cas de l'écran « Accès bloqué » (app en mode Test).
+                message = (
+                    "Délai dépassé : Google n'a pas renvoyé l'autorisation. S'il a affiché « Accès bloqué : … n'a pas "
+                    "terminé la procédure de validation », publiez l'application OAuth (Audience) ou ajoutez votre "
+                    "adresse aux utilisateurs test, puis recommencez."
+                )
+            elif "error" in q:
+                message = explain_oauth_error(q["error"], q.get("error_description", ""))
+            elif q.get("state") != state:
+                message = "Réponse de Google inattendue (jeton d'état différent) : recommencez."
+            else:
+                flow.fetch_token(code=q["code"])
+                _save(flow.credentials)
+                _status_cache["at"] = 0.0
+                status, message = "done", "Google Drive est connecté."
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Connexion Google Drive en échec")
+            message = f"Échec de la connexion : {exc}"
+        finally:
+            server.server_close()
+        with _auth_lock:
+            _auth.update(status=status, message=message)
+        if status == "done" and on_success:
+            try:
+                on_success()
+            except Exception:  # noqa: BLE001
+                log.exception("Relance des publications Drive impossible")
 
-def has_pending_flow(state: str | None) -> bool:
-    with _flows_lock:
-        return bool(state) and state in _flows
-
-
-def finish_auth(state: str, code: str) -> None:
-    with _flows_lock:
-        flow = _flows.pop(state, None)
-    if flow is None:
-        raise DriveAuthError("Session de connexion inconnue ou expirée : recommencez depuis Paramètres.")
-    flow.fetch_token(code=code)
-    _save(flow.credentials)
-    _status_cache["at"] = 0.0
+    threading.Thread(target=wait_for_google, name="drive-auth", daemon=True).start()
+    if open_browser:
+        opened = _open_browser(url)
+        with _auth_lock:
+            _auth["browser_opened"] = opened
+    return auth_session()
 
 
 def disconnect() -> None:
@@ -122,8 +274,8 @@ def connection_status(force: bool = False) -> dict:
         value = {"configured": True, "connected": False, "message": "Non connecté"}
     else:
         try:
-            creds = load_credentials()
-            about = build("drive", "v3", credentials=creds, cache_discovery=False).about().get(fields="user").execute()
+            client = DriveClient(load_credentials())
+            about = client._exec(client.svc.about().get(fields="user"))
             email = about.get("user", {}).get("emailAddress", "")
             value = {"configured": True, "connected": True, "message": f"Connecté ({email})" if email else "Connecté"}
         except (DriveAuthError, PublishSkipped) as exc:
@@ -136,13 +288,28 @@ def connection_status(force: bool = False) -> dict:
 
 # --- Client ----------------------------------------------------------------------------------------
 
+def raise_friendly(exc: HttpError) -> None:
+    """Transforme les erreurs de configuration Google Cloud en message clair (avec le lien à suivre)."""
+    content = (exc.content or b"").decode("utf-8", "ignore") if isinstance(exc.content, bytes) else str(exc.content)
+    if exc.resp.status == 403 and any(k in content for k in ("accessNotConfigured", "SERVICE_DISABLED", "has not been used")):
+        raise DriveAuthError(
+            "L'API Google Drive n'est pas activée dans le projet Google Cloud : activez-la "
+            f"({console_links()['api']}), attendez une minute, puis relancez."
+        ) from exc
+    if exc.resp.status == 401:
+        raise DriveAuthError("Autorisation Google refusée : reconnectez Drive dans Paramètres.") from exc
+
 class DriveClient:
     def __init__(self, creds: Credentials | None = None, service=None):
         self.svc = service or build("drive", "v3", credentials=creds or load_credentials(), cache_discovery=False)
 
     @staticmethod
     def _exec(request):
-        return request.execute(num_retries=5)
+        try:
+            return request.execute(num_retries=5)
+        except HttpError as exc:
+            raise_friendly(exc)
+            raise
 
     def get(self, file_id: str | None) -> dict | None:
         if not file_id:

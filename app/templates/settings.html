@@ -34,13 +34,36 @@
     </p>
     <div class="row">
       {% if drive_status.configured %}
-        <a class="btn primary" href="/drive/connect">{{ 'Reconnecter' if drive_status.connected else 'Se connecter' }} à Google Drive</a>
+        <button class="primary" hx-post="/drive/connect" hx-target="#drive-auth">
+          {{ 'Reconnecter' if drive_status.connected else 'Se connecter' }} à Google Drive</button>
       {% endif %}
       {% if drive_status.connected %}
         <form method="post" action="/drive/disconnect" class="inline-form" onsubmit="return confirm('Déconnecter Google Drive ?')"><button>Déconnecter</button></form>
       {% endif %}
       {% if drive_root_url %}<a href="{{ drive_root_url }}" target="_blank" rel="noopener">Dossier racine ↗</a>{% endif %}
     </div>
+    <div id="drive-auth" style="margin-top:0.6rem">{% with auth=drive_auth, links=drive_links %}{% include "partials/drive_auth.html" %}{% endwith %}</div>
+    {% if drive_failed and not drive_status.connected %}
+      <p class="small muted">{{ drive_failed }} séance(s) en attente de publication Drive : elles seront envoyées automatiquement dès la connexion.</p>
+    {% endif %}
+    {% if drive_client_type and drive_client_type != 'installed' %}
+      <p class="flash err small">Votre credentials.json est un client de type « {{ drive_client_type }} » : il faut un client
+        « Application de bureau » (<a href="{{ drive_links.clients }}" target="_blank" rel="noopener">Clients</a>).</p>
+    {% endif %}
+    {% if drive_status.configured %}
+    <details {{ 'open' if not drive_status.connected }} style="margin-top:0.6rem">
+      <summary class="small">Aide à la connexion{% if drive_project %} (projet Google Cloud « {{ drive_project }} »){% endif %}</summary>
+      <ol class="small">
+        <li>La connexion s'ouvre dans votre navigateur habituel (Chrome, Safari…) : Google refuse souvent la connexion dans un navigateur intégré.</li>
+        <li><a href="{{ drive_links.api }}" target="_blank" rel="noopener">API Google Drive</a> : cliquez sur « Activer ».</li>
+        <li><a href="{{ drive_links.audience }}" target="_blank" rel="noopener">Audience</a> : « Publier l'application » (Production).
+          À défaut, ajoutez votre adresse Gmail dans « Utilisateurs test » (l'autorisation expirera alors tous les 7 jours).</li>
+        <li><a href="{{ drive_links.scopes }}" target="_blank" rel="noopener">Accès aux données</a> : ajoutez le scope <code>…/auth/drive.file</code>.</li>
+        <li><a href="{{ drive_links.clients }}" target="_blank" rel="noopener">Clients</a> : type « Application de bureau », JSON enregistré sous <code>credentials.json</code> à la racine du projet.</li>
+        <li>Si Google affiche « Google n'a pas validé cette application », cliquez sur « Continuer » : c'est normal pour une application personnelle.</li>
+      </ol>
+    </details>
+    {% endif %}
     <hr>
     <form method="post" action="/parametres/drive">
       <div class="field"><label>Nom du dossier racine</label><input type="text" name="drive_root_name" value="{{ s.drive_root_name }}"></div>

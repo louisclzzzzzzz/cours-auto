@@ -86,7 +86,9 @@ L'app utilise uniquement le scope **`drive.file`** : elle ne voit que les fichie
 3. *API et services → Écran de consentement OAuth* (« Google Auth Platform ») : type d'utilisateur **Externe**, renseignez le nom de l'app et votre e-mail ; dans *Accès aux données*, ajoutez le scope `.../auth/drive.file`.
 4. **Publiez l'application en « Production »** (*Audience → Publier l'application*). En mode « Test », Google fait expirer les jetons de rafraîchissement **tous les 7 jours** et il faudrait se reconnecter chaque semaine. `drive.file` étant un scope non sensible, la publication ne demande pas de validation par Google.
 5. *Identifiants → Créer des identifiants → ID client OAuth* : type **Application de bureau**. Téléchargez le JSON et enregistrez-le à la racine du projet sous le nom **`credentials.json`**.
-6. Dans **Paramètres → Google Drive**, cliquez « Se connecter à Google Drive » et autorisez l'accès. Le jeton est enregistré dans `token.json` et rafraîchi automatiquement. En cas de jeton révoqué ou expiré, la publication Drive passe en erreur (sans rien perdre) : reconnectez-vous puis relancez « Publier sur Drive ».
+6. Dans **Paramètres → Google Drive**, cliquez « Se connecter à Google Drive » : la page de connexion Google s'ouvre dans votre **navigateur habituel** (Chrome, Safari… — Google refuse souvent la connexion dans un navigateur intégré). Choisissez votre compte et autorisez l'accès ; si Google affiche « Google n'a pas validé cette application », cliquez sur « Continuer ». L'app détecte la connexion toute seule (un serveur temporaire sur `127.0.0.1` reçoit l'autorisation) et **relance automatiquement les publications Drive restées en échec**. Le jeton est enregistré dans `token.json` et rafraîchi automatiquement. En cas de jeton révoqué ou expiré, la publication Drive passe en erreur (sans rien perdre) : reconnectez-vous.
+
+La carte Drive des Paramètres contient une **aide à la connexion** avec des liens directs vers les pages de votre projet Google Cloud (API, Audience, Accès aux données, Clients).
 
 ### Arborescence créée
 
@@ -160,6 +162,9 @@ data/
 | « ffmpeg introuvable » | Installez ffmpeg (§1) puis « Refaire l'assemblage audio ». |
 | Micro refusé / non listé | Autorisez le micro pour `127.0.0.1` dans le navigateur, puis « 🎚 Tester ». |
 | Drive : « Autorisation expirée » chaque semaine | Publiez l’app OAuth en **Production** (§6, étape 4), puis reconnectez-vous. |
+| Drive : « Accès bloqué » / accès refusé par Google | L’app OAuth est en mode « Test » sans votre adresse : publiez-la en Production ou ajoutez-vous aux utilisateurs test (Audience). |
+| Drive : « Ce navigateur ou cette application ne sont peut-être pas sécurisés » | Faites la connexion dans Chrome ou Safari (lien « Ouvrir la connexion Google » dans Paramètres). |
+| Drive : « L’API Google Drive n’est pas activée » | Activez-la avec le lien affiché, attendez une minute, puis relancez. |
 | Notion : « Page racine introuvable » | Partagez la page avec l’intégration (§5, étape 2). |
 | Base Notion supprimée par erreur | Elle est recréée à la publication suivante ; les anciennes pages ne sont pas modifiées. |
 | Erreur 429 / 5xx | Relances automatiques avec attente ; sinon relancez l'étape plus tard depuis Enregistrements. |

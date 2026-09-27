@@ -8,7 +8,8 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
 
-from .. import calendar_ics, config, db, llm
+from .. import calendar_ics, config, db, llm, subjects
+from ..pipeline import pipeline
 from ..publish import drive, notion
 from ..web import redirect, render
 
@@ -19,10 +20,17 @@ router = APIRouter()
 def settings_page(request: Request, check: bool = False):
     keys = list(config.DEFAULT_SETTINGS)
     values = {k: db.get_setting(k) for k in keys}
+    auth = drive.auth_session()
+    drive.clear_auth_session()  # un résultat (réussite/échec) ne s'affiche qu'une fois
     return render(
         request, "settings.html",
         s=values,
-        drive_status=drive.connection_status(force=check),
+        drive_status=drive.connection_status(force=check or auth.get("status") == "done"),
+        drive_auth=auth,
+        drive_links=drive.console_links(),
+        drive_project=drive.project_id(),
+        drive_client_type=drive.client_type(),
+        drive_failed=db.q1("SELECT COUNT(*) AS n FROM recordings WHERE drive_status = 'error'")["n"],
         drive_root_url=db.get_setting("drive_root_url"),
         notion_token=bool(config.notion_token()),
         notion_root_id=notion.extract_id(values["notion_root"]),
@@ -98,13 +106,50 @@ def save_drive(drive_root_name: str = Form("Cours M1"), drive_notebooklm: str = 
     return redirect("/parametres", "Options Drive enregistrées.")
 
 
-@router.get("/drive/connect")
+def _requeue_failed_drive() -> None:
+    """Après connexion : republie sur Drive les séances dont la publication Drive avait échoué."""
+    for rec in db.q("SELECT id FROM recordings WHERE drive_status = 'error'"):
+        if subjects.course_path(rec["id"]).exists():
+            pipeline.submit("recording", rec["id"], "publish_drive", chain=False)
+
+
+def _drive_auth_fragment(request: Request):
+    auth = drive.auth_session()
+    response = render(request, "partials/drive_auth.html", auth=auth, links=drive.console_links())
+    if auth.get("status") in ("done", "error"):
+        response.headers["HX-Refresh"] = "true"  # recharge Paramètres pour afficher le nouvel état
+    return response
+
+
+@router.post("/drive/connect", response_class=HTMLResponse)
 def drive_connect(request: Request):
     try:
-        url = drive.start_auth(str(request.base_url))
+        drive.start_browser_auth(on_success=_requeue_failed_drive)
+    except Exception as exc:  # noqa: BLE001
+        return render(request, "partials/drive_auth.html", auth={"status": "error", "message": f"Connexion impossible : {exc}"},
+                      links=drive.console_links())
+    return render(request, "partials/drive_auth.html", auth=drive.auth_session(), links=drive.console_links())
+
+
+@router.get("/drive/connect")
+def drive_connect_link():
+    try:
+        drive.start_browser_auth(on_success=_requeue_failed_drive)
     except Exception as exc:  # noqa: BLE001
         return redirect("/parametres", f"Connexion impossible : {exc}", "err")
-    return redirect(url)
+    return redirect("/parametres")
+
+
+@router.post("/drive/connect/cancel", response_class=HTMLResponse)
+def drive_connect_cancel(request: Request):
+    drive.cancel_browser_auth()
+    return render(request, "partials/drive_auth.html", auth={"status": "error", "message": "Connexion annulée."},
+                  links=drive.console_links())
+
+
+@router.get("/fragments/drive-auth", response_class=HTMLResponse)
+def drive_auth_fragment(request: Request):
+    return _drive_auth_fragment(request)
 
 
 @router.post("/drive/disconnect")

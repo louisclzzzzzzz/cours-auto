@@ -13,7 +13,6 @@ from pydantic import BaseModel
 
 from .. import calendar_ics, db, recorder, subjects
 from ..pipeline import pipeline
-from ..publish import drive
 from ..textutils import parse_date
 from ..web import consent_reminder_visible, redirect, render
 
@@ -68,15 +67,10 @@ def _active_recordings() -> list[dict]:
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request, day: str | None = None, state: str | None = None, code: str | None = None,
          error: str | None = None):
-    # Retour de l'autorisation Google (redirect_uri = racine de l'app, cf. client OAuth « Desktop »).
-    if state and drive.has_pending_flow(state):
-        if error or not code:
-            return redirect("/parametres", f"Connexion Google Drive annulée ({error or 'code absent'}).", "err")
-        try:
-            drive.finish_auth(state, code)
-        except Exception as exc:  # noqa: BLE001
-            return redirect("/parametres", f"Échec de la connexion Google Drive : {exc}", "err")
-        return redirect("/parametres", "Google Drive connecté.")
+    # Ancien lien de connexion Google (versions précédentes : retour sur la racine de l'app).
+    if state and (code or error):
+        return redirect("/parametres", "Ce lien de connexion Google n'est plus valable : cliquez sur « Se connecter à "
+                                       "Google Drive » (la connexion s'ouvre dans votre navigateur).", "err")
     calendar_ics.refresh_in_background(min_age_minutes=30)
     return render(
         request, "record.html",
