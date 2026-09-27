@@ -27,6 +27,9 @@ def test_suggest_subject_name():
     assert calendar_ics.suggest_subject_name("Algorithmique avancée CM") == "Algorithmique avancée"
     assert calendar_ics.suggest_subject_name("Algo. Av. - TD G1") == "Algo. Av."
     assert calendar_ics.suggest_subject_name("Réseaux TP2 G2") == "Réseaux"
+    assert calendar_ics.suggest_subject_name("**CM/TD Calcul Haute Performance") == "Calcul Haute Performance"
+    assert calendar_ics.suggest_subject_name("Prévision de séries (CM/TD/TP)") == "Prévision de séries"
+    assert calendar_ics.suggest_subject_name("Langage C (CM)") == "Langage C"
 
 
 def test_slots_for_day_expands_recurrences_and_timezones(ics_bytes):

@@ -1,13 +1,61 @@
-{% from "macros.html" import status_badge, sub_badge %}
-<div class="row" data-busy="{{ 1 if busy else 0 }}" data-status="{{ rec.status }}">
-  <strong>Statut :</strong> {{ status_badge(rec) }}
-  {{ sub_badge('Drive', rec.drive_status, rec.drive_error) }}
-  {{ sub_badge('Notion', rec.notion_status, rec.notion_error) }}
-  {% if busy %}<span class="small muted">⏳ {{ pipeline.describe() or 'en file d\'attente…' }}</span>{% endif %}
+{# Avancement d'un enregistrement (rechargé toutes les 3 s pendant un traitement). #}
+<div data-busy="{{ 1 if busy else 0 }}" data-status="{{ rec.status }}">
+  <h2 id="status-title">Avancement</h2>
+  <ol class="steps">
+    {% for st in steps %}
+    <li class="step {{ st.state }}">
+      <span class="step-icon" aria-hidden="true">
+        {%- if st.state == 'done' %}✓{% elif st.state in ('error', 'warn') %}!{% elif st.state == 'current' %}<span class="spinner"></span>{% else %}{{ loop.index }}{% endif -%}
+      </span>
+      <span class="step-label">{{ st.label }}<span class="visually-hidden"> :
+        {{ {'done': 'terminé', 'current': 'en cours', 'error': 'en échec', 'warn': 'interrompu', 'todo': 'à venir'}[st.state] }}</span></span>
+      {% if st.label == 'Publication' %}
+        <span class="step-detail">
+          {% for t in targets %}{% if not loop.first %} · {% endif %}
+            {%- if t.url and t.status == 'done' %}<a class="ext" href="{{ t.url }}" target="_blank" rel="noopener">{{ t.name }}</a>{% else %}{{ t.name }}{% endif %}
+            {{ t.status|sub_label }}
+          {%- endfor %}
+        </span>
+      {% elif st.detail %}<span class="step-detail">{{ st.detail }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+
+  {% if busy %}
+    <p class="status-line"><span class="spinner" aria-hidden="true"></span>{{ running_detail or "En file d'attente…" }}</p>
+  {% elif rec.status == 'recording' %}
+    <p class="status-line">Enregistrement en cours dans la page <a href="/">Enregistrer</a>.</p>
+  {% elif rec.status == 'interrupted' %}
+    <div class="alert warn">
+      <div><p class="alert-title">Enregistrement interrompu</p>
+        <p class="small">L'audio déjà reçu est conservé. Vous pouvez le reprendre depuis la page <a href="/">Enregistrer</a>, ou le terminer tel quel.</p></div>
+      <form method="post" action="/enregistrements/{{ rec.id }}/action" class="inline-form">
+        <input type="hidden" name="action" value="finalize">
+        <button class="primary">Terminer et traiter</button>
+      </form>
+    </div>
+  {% elif rec.status == 'error' %}
+    <div class="alert danger" role="alert">
+      <div><p class="alert-title">Échec : {{ rec.error_step or 'traitement' }}</p>
+        {% if rec.error_message %}<p class="small">{{ rec.error_message }}</p>{% endif %}</div>
+      {% if retry %}
+      <form method="post" action="/enregistrements/{{ rec.id }}/action" class="inline-form">
+        <input type="hidden" name="action" value="{{ retry }}">
+        <button class="primary">Réessayer</button>
+      </form>
+      {% endif %}
+    </div>
+  {% elif rec.status == 'done' %}
+    <p class="status-line"><span aria-hidden="true">✅</span> Traitement terminé : le cours est prêt.</p>
+  {% endif %}
+
+  {% for t in targets if t.status == 'skipped' and t.error %}<p class="small muted">{{ t.name }} : {{ t.error }}</p>{% endfor %}
+  {% if rec.state_note %}<p class="notice small">{{ rec.state_note }}</p>{% endif %}
+
+  {% if files.course or rec.notion_page_url %}
+  <div class="actions">
+    {% if files.course %}<a class="btn primary" href="/cours/{{ rec.subject_id }}?seance={{ rec.id }}">Voir le cours</a>{% endif %}
+    {% if rec.notion_page_url %}<a class="btn ext" href="{{ rec.notion_page_url }}" target="_blank" rel="noopener">Ouvrir dans Notion</a>{% endif %}
+  </div>
+  {% endif %}
 </div>
-{% if rec.status == 'error' and rec.error_message %}
-  <div class="flash err" style="margin:0.6rem 0 0"><strong>Échec — {{ rec.error_step }}</strong> : {{ rec.error_message }}</div>
-{% endif %}
-{% if rec.drive_status == 'skipped' and rec.drive_error %}<p class="small muted">Drive : {{ rec.drive_error }}</p>{% endif %}
-{% if rec.notion_status == 'skipped' and rec.notion_error %}<p class="small muted">Notion : {{ rec.notion_error }}</p>{% endif %}
-{% if rec.state_note %}<p class="flash warn" style="margin:0.6rem 0 0">{{ rec.state_note }}</p>{% endif %}

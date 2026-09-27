@@ -12,6 +12,7 @@
     panel: $("recorder"), chrono: $("chrono"), status: $("rec-status"), device: $("device"),
     vu: $("vu-bar"), summary: $("selection-summary"), start: $("btn-start"), pause: $("btn-pause"),
     resume: $("btn-resume"), stop: $("btn-stop"), test: $("btn-test-mic"),
+    picker: $("course-picker"), mic: $("mic-row"), importBox: $("import"),
   };
 
   const st = {
@@ -21,8 +22,9 @@
     elapsedBase: 0, runStart: null,
     queue: [], uploading: false, lastUploadOk: null, uploadErrors: 0,
     wakeLock: null, audioCtx: null, vuRaf: null, hbTimer: null, chronoTimer: null, previewStream: null,
-    unloading: false, importing: false,
+    unloading: false, importing: false, selectionWarned: false,
   };
+  const READY_TEXT = ui.status.textContent;
 
   // --- Utilitaires ----------------------------------------------------------------------------
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -49,31 +51,42 @@
   }
   const extFor = (mime) => (mime.startsWith("audio/ogg") ? "ogg" : mime.includes("mp4") ? "m4a" : "webm");
 
+  // Seuls les boutons utiles à l'instant sont affichés ; le choix du cours est verrouillé pendant l'enregistrement.
   function setMode(mode) {
     st.mode = mode;
-    const busy = mode === "recording" || mode === "paused";
-    ui.start.disabled = mode !== "idle";
-    ui.pause.disabled = mode !== "recording";
-    ui.resume.disabled = mode !== "paused";
-    ui.stop.disabled = !busy;
-    ui.device.disabled = mode !== "idle";
-    $("btn-import").disabled = mode !== "idle" || st.importing;
-    if (st.importing) ui.start.disabled = true;
+    const idle = mode === "idle";
+    const active = mode === "recording" || mode === "paused";
+    ui.start.hidden = !idle;
+    ui.start.disabled = !idle || st.importing;
+    ui.pause.hidden = mode !== "recording";
+    ui.resume.hidden = mode !== "paused";
+    ui.stop.hidden = !active;
+    ui.device.disabled = !idle;
+    ui.mic.hidden = !idle;
+    ui.importBox.hidden = !idle;
+    $("btn-import").disabled = !idle || st.importing;
+    ui.picker.disabled = !idle || st.importing;
     ui.panel.classList.toggle("is-recording", mode === "recording");
     ui.panel.classList.toggle("is-paused", mode === "paused");
-    document.querySelectorAll("[data-resume],[data-finalize]").forEach((b) => { b.disabled = mode !== "idle"; });
+    document.querySelectorAll("[data-resume],[data-finalize]").forEach((b) => { b.disabled = !idle; });
   }
 
   // --- Sélection du cours -----------------------------------------------------------------------
+  const frDate = (iso) => { const [y, m, d] = (iso || "").split("-"); return d ? `${d}/${m}/${y}` : ""; };
+
   function currentSelection() {
     const radio = document.querySelector('input[name="slot"]:checked');
-    if (!radio) return { error: "Choisissez d'abord le cours à enregistrer." };
+    if (!radio) return { error: "Choisissez le cours à enregistrer." };
     if (radio.value === "manual") {
       const subj = $("manual-subject").value;
       const newName = $("manual-new-subject").value.trim();
-      if (!subj || (subj === "new" && !newName)) return { error: "Choisissez (ou créez) la matière du cours hors EDT." };
+      if (!subj || (subj === "new" && !newName)) return { error: "Choisissez la matière du cours (ou créez-en une)." };
+      const name = subj === "new" ? newName : $("manual-subject").selectedOptions[0].text;
+      const type = $("manual-type").value;
       return {
-        label: `${subj === "new" ? newName : $("manual-subject").selectedOptions[0].text} — ${$("manual-type").value} (hors EDT)`,
+        title: name,
+        detail: `${type} · hors emploi du temps · ${frDate($("manual-date").value)}`,
+        label: `${name} — ${type}`,
         payload: {
           subject_id: subj === "new" ? null : Number(subj),
           subject_name: subj === "new" ? newName : null,
@@ -87,14 +100,30 @@
     const d = radio.dataset;
     const card = radio.closest("[data-slot-card]");
     const type = card.querySelector(".slot-type").value;
-    if (!d.subjectId) return { error: "Associez d'abord cet intitulé ADE à une matière (formulaire sous le créneau)." };
+    if (!d.subjectId) return { error: "Associez d'abord ce créneau à une matière (juste sous le créneau)." };
     return {
-      label: `${d.subjectName} — ${type} · ${d.summary}`,
+      title: d.subjectName,
+      detail: [type, d.time, d.location].filter(Boolean).join(" · "),
+      label: `${d.subjectName} — ${type}`,
       payload: {
         subject_id: Number(d.subjectId), course_type: type, teacher: d.teacher, session_date: d.date,
         event: { uid: d.uid, summary: d.summary, start: d.start, end: d.end, location: d.location },
       },
     };
+  }
+
+  function showSummary(title, detail) {
+    ui.summary.replaceChildren();
+    ui.summary.classList.toggle("empty", !detail);
+    const strong = document.createElement("strong");
+    strong.textContent = title;
+    ui.summary.append(detail ? strong : title);
+    if (detail) {
+      const sub = document.createElement("span");
+      sub.className = "small muted";
+      sub.textContent = detail;
+      ui.summary.append(sub);
+    }
   }
 
   function refreshSelection() {
@@ -104,14 +133,28 @@
     });
     if (st.mode !== "idle") return;
     const sel = currentSelection();
-    ui.summary.textContent = sel.error ? sel.error : `Cours sélectionné : ${sel.label}`;
+    if (sel.error) showSummary(sel.error, "");
+    else showSummary(sel.title, sel.detail);
+    if (st.selectionWarned && !sel.error) {  // l'avertissement précédent n'a plus lieu d'être
+      st.selectionWarned = false;
+      setStatus(READY_TEXT);
+      $("import-status").textContent = "";
+    }
+  }
+
+  // Sélection invalide : explication dans la zone d'état et retour sur le choix du cours.
+  function selectionProblem(message, statusEl) {
+    st.selectionWarned = true;
+    statusEl.textContent = `⚠️ ${message}`;
+    const target = document.querySelector('input[name="slot"]:checked') || document.querySelector('input[name="slot"]');
+    if (target) target.focus();
   }
 
   document.addEventListener("change", (e) => {
-    if (e.target.matches('input[name="slot"], .slot-type, #manual-subject, #manual-type')) refreshSelection();
-    if (e.target.id === "manual-subject") $("manual-new-subject").classList.toggle("hidden", e.target.value !== "new");
-    if (e.target.name === "match") {
-      e.target.form.querySelector('[name="pattern"]').classList.toggle("hidden", e.target.value !== "regex");
+    if (e.target.matches('input[name="slot"], .slot-type, #manual-subject, #manual-type, #manual-date')) refreshSelection();
+    if (e.target.id === "manual-subject") {
+      $("manual-new-field").classList.toggle("hidden", e.target.value !== "new");
+      if (e.target.value === "new") $("manual-new-subject").focus();
     }
     if (e.target.name === "subject_id" && e.target.form?.classList.contains("quick-map")) {
       e.target.form.querySelector('[name="new_name"]').classList.toggle("hidden", e.target.value !== "new");
@@ -120,9 +163,9 @@
   document.addEventListener("input", (e) => { if (e.target.id === "manual-new-subject") refreshSelection(); });
   document.addEventListener("click", (e) => {
     const card = e.target.closest("[data-slot-card]");
-    if (card && st.mode === "idle" && !e.target.closest("form, select, input, button, a")) {
+    if (card && st.mode === "idle" && !e.target.closest("form, select, input, button, a, .slot-options")) {
       const r = card.querySelector('input[name="slot"]');
-      if (r) { r.checked = true; refreshSelection(); }
+      if (r && !r.checked) { r.checked = true; refreshSelection(); }
     }
   });
   document.body.addEventListener("htmx:afterSwap", (e) => { if (e.detail.target.id === "slots") refreshSelection(); });
@@ -306,6 +349,7 @@
     acquireWakeLock();
     startTimers();
     setMode("recording");
+    ui.pause.focus();
     heartbeat();
     updateUploadStatus();
   }
@@ -333,22 +377,22 @@
 
   async function startNew() {
     const sel = currentSelection();
-    if (sel.error) { alert(sel.error); return; }
-    if (!window.MediaRecorder) { alert("Ce navigateur ne prend pas en charge MediaRecorder."); return; }
+    if (sel.error) { selectionProblem(sel.error, ui.status); return; }
+    if (!window.MediaRecorder) { setStatus("⚠️ Ce navigateur ne sait pas enregistrer l'audio (MediaRecorder absent)."); return; }
     stopPreview();
     let stream;
-    try { stream = await getStream(); } catch (err) { alert(`Micro inaccessible : ${err.message}`); return; }
+    try { stream = await getStream(); } catch (err) { setStatus(`⚠️ Micro inaccessible : ${err.message}`); return; }
     await listDevices();
     const mime = pickMime();
     try {
       const res = await api("POST", "/api/recordings", { ...sel.payload, mime_type: mime });
       st.recId = res.id;
-      ui.summary.textContent = `Enregistrement #${res.id} : ${sel.label}`;
+      showSummary(sel.title, `${sel.detail} · enregistrement n° ${res.id}`);
       begin(stream, mime, res);
       document.body.dispatchEvent(new Event("refresh-latest"));
     } catch (err) {
       stream.getTracks().forEach((t) => t.stop());
-      alert(`Impossible de démarrer : ${err.message}`);
+      setStatus(`⚠️ Impossible de démarrer : ${err.message}`);
     }
   }
 
@@ -361,7 +405,7 @@
     try {
       const seg = await api("POST", `/api/recordings/${id}/segments`, { mime_type: mime });
       st.recId = Number(id);
-      ui.summary.textContent = `Reprise de l'enregistrement #${id} (segment ${seg.segment}).`;
+      showSummary(`Reprise de l'enregistrement n° ${id}`, `nouveau segment (${seg.segment}), assemblé automatiquement`);
       document.querySelectorAll(`[data-active-recording="${id}"]`).forEach((el) => el.classList.add("hidden"));
       begin(stream, mime, seg);
     } catch (err) {
@@ -371,7 +415,7 @@
   }
 
   async function resumeFromBanner(id) {
-    try { await resumeExisting(id); } catch (err) { alert(`Reprise impossible : ${err.message}`); }
+    try { await resumeExisting(id); } catch (err) { setStatus(`⚠️ Reprise impossible : ${err.message}`); }
   }
 
   function pause() {
@@ -381,6 +425,7 @@
     st.elapsedBase = elapsed();
     st.runStart = null;
     setMode("paused");
+    ui.resume.focus();
     heartbeat();
     updateUploadStatus();
   }
@@ -390,6 +435,7 @@
     st.recorder.resume();
     st.runStart = performance.now();
     setMode("recording");
+    ui.pause.focus();
     heartbeat();
   }
 
@@ -413,32 +459,47 @@
     if (!flushed) setStatus("⚠️ Certains morceaux n'ont pas pu être envoyés : l'enregistrement sera finalisé avec ce qui a été reçu.");
     try {
       const res = await api("POST", `/api/recordings/${st.recId}/stop`, { elapsed: st.elapsedBase });
-      setStatus(res.ok ? `Enregistrement #${st.recId} terminé : traitement en cours (voir ci-dessous).` : "Aucun audio reçu : enregistrement en erreur.");
+      setStatus(res.ok ? "✅ Enregistrement terminé : le traitement a démarré (suivi ci-dessous)." : "⚠️ Aucun audio reçu : enregistrement en erreur.");
     } catch (err) {
-      setStatus(`Arrêt non confirmé par le serveur (${err.message}). Utilisez « Finaliser » dans Enregistrements.`);
+      setStatus(`⚠️ Arrêt non confirmé par le serveur (${err.message}). Terminez-le depuis l'Historique.`);
     }
     st.recId = null;
     st.recorder = null;
     st.stream = null;
     setMode("idle");
+    ui.start.focus();
     refreshSelection();
     document.body.dispatchEvent(new Event("refresh-latest"));
   }
 
   async function finalizeExisting(id) {
-    if (!confirm("Finaliser cet enregistrement avec les morceaux déjà reçus et lancer le traitement ?")) return;
-    try { await api("POST", `/api/recordings/${id}/stop`, {}); location.reload(); } catch (err) { alert(err.message); }
+    if (!confirm("Terminer cet enregistrement avec l'audio déjà reçu et lancer le traitement ?")) return;
+    try { await api("POST", `/api/recordings/${id}/stop`, {}); location.reload(); } catch (err) { setStatus(`⚠️ ${err.message}`); }
   }
 
   // --- Import d'un fichier audio -------------------------------------------------------------------
   const imp = { file: $("import-file"), button: $("btn-import"), progress: $("import-progress"), status: $("import-status") };
 
+  // « Importer un fichier audio… » : vérifie le cours choisi, ouvre le sélecteur de fichier, puis envoie.
+  function chooseImportFile() {
+    if (st.mode !== "idle" || st.importing) return;
+    const sel = currentSelection();
+    if (sel.error) { selectionProblem(sel.error, imp.status); return; }
+    imp.status.textContent = "";
+    imp.file.value = "";
+    imp.file.click();
+  }
+
   function importAudio() {
     if (st.mode !== "idle" || st.importing) return;
     const file = imp.file.files[0];
-    if (!file) { alert("Choisissez d'abord un fichier audio."); return; }
+    if (!file) return;
     const sel = currentSelection();
-    if (sel.error) { alert(sel.error); return; }
+    if (sel.error) { selectionProblem(sel.error, imp.status); return; }
+    if (!confirm(`Importer « ${file.name} » pour ${sel.label} ?\n\nLe fichier sera transcrit, mis en forme puis publié comme un enregistrement.`)) {
+      imp.file.value = "";
+      return;
+    }
     const form = new FormData();
     form.append("file", file);
     const p = sel.payload;
@@ -448,8 +509,8 @@
     if (p.event) form.append("event", JSON.stringify(p.event));
 
     st.importing = true;
-    imp.button.disabled = ui.start.disabled = true;
-    imp.progress.classList.remove("hidden");
+    setMode(st.mode);
+    imp.progress.hidden = false;
     imp.progress.value = 0;
     imp.status.textContent = `Envoi de « ${file.name} »…`;
     const xhr = new XMLHttpRequest();  // (fetch ne donne pas la progression de l'envoi)
@@ -461,9 +522,8 @@
     };
     const done = (message) => {
       st.importing = false;
-      imp.button.disabled = false;
       setMode(st.mode);
-      imp.progress.classList.add("hidden");
+      imp.progress.hidden = true;
       imp.status.textContent = message;
     };
     xhr.onload = () => {
@@ -471,7 +531,7 @@
       try { data = JSON.parse(xhr.responseText); } catch (err) { /* réponse non JSON */ }
       if (xhr.status >= 200 && xhr.status < 300) {
         imp.file.value = "";
-        done(`✅ « ${file.name} » importé (enregistrement #${data.id}, ${fmt(data.duration || 0)}) : traitement en cours ci-dessous.`
+        done(`✅ « ${file.name} » importé (${fmt(data.duration || 0)}) : le traitement a démarré (suivi ci-dessous).`
           + (data.warning ? ` ⚠️ ${data.warning}` : ""));
         document.body.dispatchEvent(new Event("refresh-latest"));
       } else {
@@ -482,7 +542,8 @@
     xhr.send(form);
   }
 
-  imp.button.addEventListener("click", importAudio);
+  imp.button.addEventListener("click", chooseImportFile);
+  imp.file.addEventListener("change", importAudio);
 
   ui.start.addEventListener("click", startNew);
   ui.pause.addEventListener("click", pause);

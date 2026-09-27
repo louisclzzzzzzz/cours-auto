@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from .. import calendar_ics, db, recorder, subjects
-from ..pipeline import pipeline
+from ..pipeline import BUSY_STATUSES, STEP_LABELS, pipeline
 from ..textutils import parse_date
 from ..web import consent_reminder_visible, redirect, render
 
@@ -39,17 +39,31 @@ def slots_context(day: str | date | None = None, selected: str | None = None, no
     if selected:
         for s in slots:
             s.is_current = s.key == selected
+    next_course_day = None
+    if not slots:  # jour sans cours (week-end…) : on propose d'aller au prochain jour de cours
+        upcoming = calendar_ics.slots_between(d + timedelta(days=1), d + timedelta(days=14))
+        next_course_day = min((s.start.date() for s in upcoming), default=None)
     return {
         "day": d,
         "today": today,
         "prev_day": d - timedelta(days=1),
         "next_day": d + timedelta(days=1),
+        "next_course_day": next_course_day,
         "slots": slots,
+        "manual_checked": selected == "manual" or not slots,
         "subjects": db.list_subjects(),
         "ics": _ics_info(),
         "notice": notice,
         "selected": selected,
     }
+
+
+def latest_context() -> dict:
+    """Derniers traitements de l'accueil ; le rafraîchissement automatique ne tourne que si l'un d'eux avance."""
+    recs = db.list_recordings(limit=5)
+    polling = any(r["status"] in BUSY_STATUSES or r["status"] == "recording" or pipeline.is_active(r["id"])
+                  for r in recs)
+    return {"recs": recs, "polling": polling}
 
 
 def _active_recordings() -> list[dict]:
@@ -75,6 +89,7 @@ def home(request: Request, day: str | None = None, state: str | None = None, cod
     return render(
         request, "record.html",
         **slots_context(day),
+        **latest_context(),
         active=_active_recordings(),
         consent=consent_reminder_visible(),
     )
@@ -122,12 +137,16 @@ def quick_map(
 
 @router.get("/fragments/latest", response_class=HTMLResponse)
 def latest_fragment(request: Request):
-    return render(request, "partials/latest.html", recs=db.list_recordings(limit=5))
+    return render(request, "partials/latest.html", **latest_context())
 
 
 @router.get("/fragments/worker", response_class=HTMLResponse)
 def worker_fragment(request: Request):
-    return render(request, "partials/worker.html", current=pipeline.current, detail=pipeline.describe(),
+    current = pipeline.current
+    rid = current.get("recording_id") if current else None
+    return render(request, "partials/worker.html", current=current, detail=pipeline.describe(),
+                  rec=db.get_recording(rid) if rid else None,
+                  step=STEP_LABELS.get(current.get("step", ""), "traitement") if current else "",
                   queued=pipeline.queued_count())
 
 

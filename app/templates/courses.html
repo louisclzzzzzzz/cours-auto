@@ -1,33 +1,99 @@
 {% extends "base.html" %}
-{% from "macros.html" import session_name %}
+{% from "macros.html" import session_name, ext_link %}
 {% block title %}Cours{% endblock %}
 {% block content %}
-<div class="row spread">
-  <h1>Cours</h1>
-  <div class="links">
-    {% if notion_seances_url %}<a href="{{ notion_seances_url }}" target="_blank" rel="noopener">Base « Séances » (Notion)</a>{% endif %}
-    {% if drive_root_url %}<a href="{{ drive_root_url }}" target="_blank" rel="noopener">Dossier Drive « Cours M1 »</a>{% endif %}
+<div class="page-head">
+  <div>
+    <h1>Cours</h1>
+    <p class="muted">Vos matières et leurs séances mises en forme.</p>
+  </div>
+  <div class="actions">
+    <details class="menu">
+      <summary class="btn">+ Nouvelle matière</summary>
+      <form method="post" action="/matieres" class="menu-panel form-panel">
+        <div class="field"><label for="ns-name">Nom de la matière</label>
+          <input type="text" id="ns-name" name="name" required placeholder="ex. Algorithmique avancée"></div>
+        <div class="field"><label for="ns-teachers">Enseignant(s) <span class="opt">(facultatif)</span></label>
+          <input type="text" id="ns-teachers" name="teachers"></div>
+        <button class="primary">Créer la matière</button>
+      </form>
+    </details>
   </div>
 </div>
-<div class="grid">
+
+{% if rows %}
+<ul class="rows card flush subject-rows" aria-label="Matières">
   {% for s in rows %}
-  <section class="card">
-    <div class="row spread">
-      <h2><a href="/cours/{{ s.id }}">{{ s.name }}</a></h2>
-      <span class="badge">{{ s.n_sessions }} séance(s)</span>
+  <li data-href="/cours/{{ s.id }}">
+    <div class="row-main">
+      <a class="row-title" href="/cours/{{ s.id }}">{{ s.name }}</a>
+      {% if s.teachers %}<div class="small muted">{{ s.teachers }}</div>{% endif %}
     </div>
-    {% if s.teachers %}<p class="small muted">{{ s.teachers }}</p>{% endif %}
-    {% if s.last %}<p class="small">Dernière : <a href="/cours/{{ s.id }}?seance={{ s.last.id }}">{{ session_name(s.last) }}</a> ({{ s.last.session_date|fr_short_date }})</p>{% endif %}
-    {% if s.n_annotated %}<p class="small muted">{{ s.n_annotated }} séance(s) avec annotations importées</p>{% endif %}
-    <div class="links" style="margin-top:0.5rem">
-      {% if s.notion_page_url %}<a href="{{ s.notion_page_url }}" target="_blank" rel="noopener">Notion</a>{% endif %}
-      {% if s.drive_folder_url %}<a href="{{ s.drive_folder_url }}" target="_blank" rel="noopener">Dossier Drive</a>{% endif %}
-      {% if s.drive_full_url %}<a href="{{ s.drive_full_url }}" target="_blank" rel="noopener">Cours complet</a>{% endif %}
-      {% if s.drive_gdoc_url %}<a href="{{ s.drive_gdoc_url }}" target="_blank" rel="noopener">Google Doc NotebookLM</a>{% endif %}
+    <div class="row-detail small">
+      {% if s.last %}
+        <span class="ellipsis" title="{{ session_name(s.last) }}">Dernière séance : {{ session_name(s.last) }}</span>
+        <span class="muted">{{ s.last.session_date|fr_short_date }}</span>
+      {% else %}
+        <span class="muted">Aucune séance pour l'instant</span>
+      {% endif %}
     </div>
-  </section>
-  {% else %}
-  <p class="muted">Aucune matière. Elles sont créées depuis la page <a href="/">Enregistrer</a> ou <a href="/matieres">Matières</a>.</p>
+    <div class="row-side">
+      {% if s.n_proposed %}<a class="badge warn" href="/matieres/{{ s.id }}#propositions">{{ s.n_proposed }} terme{{ 's' if s.n_proposed > 1 }} à valider</a>{% endif %}
+      {% if s.n_sessions %}<span class="badge">{{ s.n_sessions }} séance{{ 's' if s.n_sessions > 1 }}</span>{% endif %}
+    </div>
+  </li>
   {% endfor %}
+</ul>
+{% else %}
+<div class="card empty-state">
+  <p>Aucune matière pour l'instant.</p>
+  <p class="small">Elles se créent en associant un cours de l'emploi du temps (page <a href="/">Enregistrer</a> ou ci-dessous),
+    ou avec « + Nouvelle matière ».</p>
 </div>
+{% endif %}
+
+{% if unmapped %}
+<details class="card disclosure" id="intitules">
+  <summary>{{ unmapped|length }} intitulé{{ 's' if unmapped|length > 1 }} de l'emploi du temps sans matière</summary>
+  <p class="small muted">Associez chaque intitulé à une matière une fois pour toutes : ses créneaux seront reconnus automatiquement.
+    Pour une règle plus souple (expression régulière), passez par les réglages de la matière.</p>
+  <ul class="rows compact">
+    {% for u in unmapped %}
+    <li>
+      <form method="post" action="/matieres/associer" class="map-form">
+        <input type="hidden" name="summary" value="{{ u.summary }}"><input type="hidden" name="teacher" value="{{ u.teacher }}">
+        <div class="row-main">
+          <strong>{{ u.summary }}</strong>
+          <div class="small muted">{{ u.count }} créneau{{ 'x' if u.count > 1 }}{% if u.type %} · {{ u.type }}{% endif %}{% if u.teacher %} · {{ u.teacher }}{% endif %}</div>
+        </div>
+        <select name="subject_id" aria-label="Matière pour « {{ u.summary }} »">
+          <option value="new">Nouvelle matière…</option>
+          {% for s in subjects_list %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
+        </select>
+        <input type="text" name="new_name" value="{{ u.suggested }}" aria-label="Nom de la nouvelle matière">
+        <button>Associer</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+</details>
+{% endif %}
+
+{% if notion_seances_url or drive_root_url %}
+<p class="small muted">Tout retrouver :
+  {% if notion_seances_url %}{{ ext_link(notion_seances_url, 'base « Séances » dans Notion') }}{% endif %}
+  {% if notion_seances_url and drive_root_url %} · {% endif %}
+  {% if drive_root_url %}{{ ext_link(drive_root_url, 'dossier Google Drive') }}{% endif %}
+</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Dans la liste « intitulés sans matière », le nom n'est utile que pour une nouvelle matière.
+  document.addEventListener("change", (e) => {
+    const form = e.target.closest(".map-form");
+    if (form && e.target.name === "subject_id") form.querySelector('[name="new_name"]').hidden = e.target.value !== "new";
+  });
+</script>
 {% endblock %}

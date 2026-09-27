@@ -1,30 +1,19 @@
-{% from "macros.html" import status_badge, sub_badge %}
+{% from "macros.html" import status_badge, session_name %}
+{# Se recharge toutes les 5 s tant qu'un enregistrement est en cours de traitement. #}
+<tbody id="rec-rows" {% if polling %}hx-get="/fragments/recordings" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>
 {% for r in recs %}
-<tr>
-  <td>{{ r.session_date|fr_short_date }}<div class="small muted">{{ r.started_at[11:16] }}</div></td>
-  <td>{{ r.subject_name or '—' }}</td>
-  <td><a href="/enregistrements/{{ r.id }}"><strong>{{ r.course_type }} {{ r.session_number }}</strong>{% if r.title %} – {{ r.title }}{% endif %}</a>
-    {% if r.origin == 'import' %}<span class="badge" title="{{ r.source_filename }}">📁 importé</span>{% endif %}</td>
-  <td>{{ (r.duration_seconds or r.elapsed_seconds)|duration }}</td>
+<tr data-href="/enregistrements/{{ r.id }}">
+  <td class="nowrap">{{ r.session_date|fr_short_date }}<div class="small muted">{{ r.started_at[11:16] }}</div></td>
+  <td>
+    <a class="row-title" href="/enregistrements/{{ r.id }}">{{ r.subject_name or 'Sans matière' }}</a>
+    <div>{{ session_name(r) }}{% if r.origin == 'import' %} <span class="pill" title="{{ r.source_filename }}">📁 importé</span>{% endif %}</div>
+  </td>
+  <td class="nowrap">{{ (r.duration_seconds or r.elapsed_seconds)|duration }}</td>
   <td>{{ status_badge(r) }}
     {% if pipeline.current and pipeline.current.get('recording_id') == r.id %}<div class="small muted">{{ pipeline.describe() }}</div>{% endif %}
   </td>
-  <td>
-    {% if r.drive_status != 'pending' or r.notion_status != 'pending' %}
-      {{ sub_badge('Drive', r.drive_status, r.drive_error) }}<br>{{ sub_badge('Notion', r.notion_status, r.notion_error) }}
-    {% else %}<span class="muted">—</span>{% endif %}
-  </td>
-  <td class="row">
-    {% if r.status == 'interrupted' %}
-      <form method="post" action="/enregistrements/{{ r.id }}/action" class="inline-form">
-        <input type="hidden" name="action" value="finalize"><input type="hidden" name="back" value="/enregistrements">
-        <button title="Finaliser avec les morceaux reçus">Finaliser</button>
-      </form>
-    {% endif %}
-    {% if r.notion_page_url %}<a href="{{ r.notion_page_url }}" target="_blank" rel="noopener" title="Ouvrir dans Notion">Notion ↗</a>{% endif %}
-    <a class="btn" href="/enregistrements/{{ r.id }}">Détails</a>
-  </td>
 </tr>
 {% else %}
-<tr><td colspan="7" class="muted">Aucun enregistrement. Commencez depuis la page <a href="/">Enregistrer</a>.</td></tr>
+<tr><td colspan="4" class="muted">Aucun enregistrement pour l'instant. Commencez depuis la page <a href="/">Enregistrer</a>.</td></tr>
 {% endfor %}
+</tbody>

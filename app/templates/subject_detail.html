@@ -1,99 +1,98 @@
 {% extends "base.html" %}
 {% from "macros.html" import markdown %}
-{% block title %}{{ subject.name }}{% endblock %}
+{% block title %}Réglages · {{ subject.name }}{% endblock %}
 {% block content %}
-<p class="muted small"><a href="/matieres">← Matières</a></p>
-<div class="row spread">
-  <h1>{{ subject.name }}</h1>
-  <div class="links">
-    <a class="internal" href="/cours/{{ subject.id }}">Voir les cours →</a>
-    {% if subject.notion_page_url %}<a href="{{ subject.notion_page_url }}" target="_blank" rel="noopener">Notion</a>{% endif %}
-    {% if subject.drive_folder_url %}<a href="{{ subject.drive_folder_url }}" target="_blank" rel="noopener">Dossier Drive</a>{% endif %}
-    {% if subject.drive_gdoc_url %}<a href="{{ subject.drive_gdoc_url }}" target="_blank" rel="noopener">Google Doc NotebookLM</a>{% endif %}
+<div class="narrow">
+<div class="page-head">
+  <div>
+    <p class="crumb"><a href="/cours/{{ subject.id }}">← {{ subject.name }}</a></p>
+    <h1>Réglages de la matière</h1>
+    <p class="muted">{{ subject.name }} · {% for t in COURSE_TYPES %}{{ t }} {{ counts.get(t, 0) }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
   </div>
 </div>
-<p class="muted">Séances : {% for t in COURSE_TYPES %}{{ t }} {{ counts.get(t, 0) }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+
+{% if proposed %}
+<section class="card" id="propositions" aria-labelledby="prop-title">
+  <div class="card-head">
+    <h2 id="prop-title">Termes proposés</h2>
+    <span class="badge warn">{{ proposed|length }} à valider</span>
+  </div>
+  <p class="small muted">Repérés dans vos derniers cours. Cochez ceux à ajouter au vocabulaire : les autres seront écartés.</p>
+  <form method="post" action="/matieres/{{ subject.id }}/propositions">
+    <fieldset class="bare">
+      <legend class="visually-hidden">Termes à ajouter au vocabulaire</legend>
+      <div class="check-grid">
+        {% for t in proposed %}<label class="check"><input type="checkbox" name="accepted" value="{{ t }}" checked> {{ t }}</label>{% endfor %}
+      </div>
+    </fieldset>
+    <div class="actions">
+      <button class="primary" name="decision" value="accept">Valider</button>
+      <button class="link" name="decision" value="reject_all">Tout écarter</button>
+    </div>
+  </form>
+</section>
+{% endif %}
+
+<section class="card" id="vocabulaire" aria-labelledby="vocab-title">
+  <div class="card-head">
+    <h2 id="vocab-title">Vocabulaire</h2>
+    <span class="muted small">{{ vocab|length }} / {{ max_vocab }} termes</span>
+  </div>
+  <p class="small muted">Noms propres, termes techniques, noms d'algorithmes… un par ligne. Ils aident la transcription à les écrire correctement.</p>
+  <form method="post" action="/matieres/{{ subject.id }}/vocabulaire" class="stack">
+    <label for="terms" class="visually-hidden">Vocabulaire, un terme par ligne</label>
+    <textarea id="terms" name="terms" rows="8">{{ vocab|join('\n') }}</textarea>
+    <button class="primary">Enregistrer le vocabulaire</button>
+  </form>
+</section>
 
 <div class="grid">
-  <section class="card">
-    <h2>Informations</h2>
+  <section class="card" id="infos" aria-labelledby="infos-title">
+    <h2 id="infos-title">Nom et enseignants</h2>
     <form method="post" action="/matieres/{{ subject.id }}">
-      <div class="field"><label>Nom</label><input type="text" name="name" value="{{ subject.name }}" required></div>
-      <div class="field"><label>Enseignant(s)</label><input type="text" name="teachers" value="{{ subject.teachers }}"></div>
+      <div class="field"><label for="s-name">Nom</label><input type="text" id="s-name" name="name" value="{{ subject.name }}" required></div>
+      <div class="field"><label for="s-teachers">Enseignant(s)</label><input type="text" id="s-teachers" name="teachers" value="{{ subject.teachers }}"></div>
       <button>Enregistrer</button>
     </form>
-    <hr>
-    <form method="post" action="/matieres/{{ subject.id }}/delete" onsubmit="return confirm('Supprimer cette matière ?')">
-      <button class="danger" {{ 'disabled title="La matière a des enregistrements"' if n_recordings }}>Supprimer la matière</button>
-    </form>
   </section>
 
-  <section class="card">
-    <h2>Intitulés ADE associés</h2>
-    <p class="small muted">Un créneau de l'emploi du temps est rattaché à cette matière si son intitulé correspond exactement
-      (casse et espaces ignorés) ou si l'expression régulière le trouve.</p>
-    <table class="list">
+  <section class="card" id="edt" aria-labelledby="edt-title">
+    <h2 id="edt-title">Emploi du temps</h2>
+    <p class="small muted">Créneaux ADE rattachés à cette matière (intitulé exact, casse et espaces ignorés, ou expression régulière).</p>
+    {% if mappings %}
+    <ul class="rows compact">
       {% for m in mappings %}
-      <tr>
-        <td>{% if m.is_regex %}<span class="badge">regex</span> <code>{{ m.pattern }}</code>{% else %}{{ m.pattern }}{% endif %}</td>
-        <td style="text-align:right">
-          <form method="post" action="/matieres/{{ subject.id }}/mappings/{{ m.id }}/delete" class="inline-form"><button class="link">Retirer</button></form>
-        </td>
-      </tr>
-      {% else %}
-      <tr><td class="muted">Aucun intitulé associé.</td></tr>
+      <li>
+        <span class="row-main">{% if m.is_regex %}<span class="pill">regex</span> <code>{{ m.pattern }}</code>{% else %}{{ m.pattern }}{% endif %}</span>
+        <form method="post" action="/matieres/{{ subject.id }}/mappings/{{ m.id }}/delete" class="inline-form">
+          <button class="link small" aria-label="Retirer « {{ m.pattern }} »">Retirer</button>
+        </form>
+      </li>
       {% endfor %}
-    </table>
-    <form method="post" action="/matieres/{{ subject.id }}/mappings" class="row" style="margin-top:0.7rem">
-      <input type="text" name="pattern" placeholder="Intitulé ADE exact ou regex" style="flex:1" required>
-      <label class="check"><input type="checkbox" name="is_regex" value="1"> regex</label>
-      <button>Ajouter</button>
-    </form>
-  </section>
-</div>
-
-<div class="grid">
-  <section class="card">
-    <h2>Vocabulaire <span class="muted small">({{ vocab|length }}/{{ max_vocab }})</span></h2>
-    <p class="small muted">Un terme par ligne : noms propres, termes techniques, noms d'algorithmes. Envoyé à Voxtral
-      (context biasing) ; les espaces sont remplacés par « _ » comme l'exige l'API.</p>
-    <form method="post" action="/matieres/{{ subject.id }}/vocabulaire">
-      <textarea name="terms" rows="10">{{ vocab|join('\n') }}</textarea>
-      <button style="margin-top:0.5rem">Enregistrer le vocabulaire</button>
-    </form>
-    {% if bias_preview %}
-    <details style="margin-top:0.6rem"><summary class="small">Termes tels qu'envoyés à l'API</summary>
-      <div class="term-list">{% for t in bias_preview %}<code>{{ t }}</code>{% endfor %}</div>
-    </details>
-    {% endif %}
-  </section>
-
-  <section class="card" id="propositions">
-    <h2>Termes proposés <span class="muted small">(détectés dans les derniers cours)</span></h2>
-    {% if proposed %}
-    <form method="post" action="/matieres/{{ subject.id }}/propositions">
-      {% for t in proposed %}
-        <label class="check"><input type="checkbox" name="accepted" value="{{ t }}" checked> {{ t }}</label>
-      {% endfor %}
-      <div class="row" style="margin-top:0.6rem">
-        <button class="primary" name="decision" value="accept">Ajouter les termes cochés</button>
-        <button name="decision" value="reject">Ignorer les termes cochés</button>
-        <button name="decision" value="reject_all" class="link">Tout ignorer</button>
-      </div>
-    </form>
+    </ul>
     {% else %}
-      <p class="muted">Aucun terme en attente de validation.</p>
+    <p class="muted small">Aucun intitulé associé.</p>
     {% endif %}
+    <form method="post" action="/matieres/{{ subject.id }}/mappings" style="margin-top:0.75rem">
+      <div class="row">
+        <input type="text" name="pattern" aria-label="Intitulé ADE ou expression régulière" placeholder="Intitulé ADE" style="flex:1 1 10rem" required>
+        <button>Ajouter</button>
+      </div>
+      <label class="check small"><input type="checkbox" name="is_regex" value="1"> expression régulière</label>
+    </form>
   </section>
 </div>
 
-<section class="card">
-  <h2>État de la matière <span class="muted small">(_etat.md — mémoire envoyée au LLM à chaque séance)</span></h2>
+<details class="card disclosure" id="memoire">
+  <summary>Mémoire de la matière <span class="muted small">(avancé)</span></summary>
+  <p class="small muted">Résumé tenu à jour après chaque séance (plan, notions, notations) et transmis au LLM pour la suivante.
+    Vous pouvez le corriger ; restez sous ~3 000 tokens.</p>
   <div class="grid">
     <form method="post" action="/matieres/{{ subject.id }}/etat">
+      <label for="state-editor" class="visually-hidden">État de la matière (Markdown)</label>
       <textarea name="state" rows="22" id="state-editor">{{ state }}</textarea>
       <div class="row" style="margin-top:0.5rem">
-        <button>Enregistrer l'état</button>
+        <button>Enregistrer</button>
         <span class="small muted" id="state-size"></span>
       </div>
     </form>
@@ -101,7 +100,18 @@
       {% if state %}{{ markdown(state, 'state-preview') }}{% else %}<p class="muted">Vide : il sera créé après la première séance mise en forme.</p>{% endif %}
     </div>
   </div>
-</section>
+</details>
+
+<div class="danger-zone">
+  {% if n_recordings %}
+    <p class="small muted">Cette matière a {{ n_recordings }} enregistrement{{ 's' if n_recordings > 1 }} : supprimez-les ou réaffectez-les pour pouvoir la supprimer.</p>
+  {% else %}
+    <form method="post" action="/matieres/{{ subject.id }}/delete" onsubmit="return confirm('Supprimer définitivement cette matière ?')">
+      <button class="danger">Supprimer la matière</button>
+    </form>
+  {% endif %}
+</div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -112,7 +122,7 @@
     const src = document.getElementById("state-preview-src");
     const update = () => {
       const words = ed.value.trim() ? ed.value.trim().split(/\s+/).length : 0;
-      size.textContent = `${words} mots (≈ ${Math.round(ed.value.length / 4)} tokens, cible < 3 000)`;
+      size.textContent = `${words} mots (≈ ${Math.round(ed.value.length / 4)} tokens)`;
       if (src) { src.value = ed.value; window.renderAllMarkdown && window.renderAllMarkdown(src.parentElement); }
     };
     ed.addEventListener("input", update);

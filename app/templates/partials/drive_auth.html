@@ -1,19 +1,20 @@
 {% if auth.status == 'waiting' %}
-<div class="notice" hx-get="/fragments/drive-auth" hx-trigger="every 2s" hx-target="#drive-auth" hx-swap="innerHTML">
-  <p>⏳ <strong>Connexion en cours dans votre navigateur.</strong>
-    {% if auth.browser_opened %}Une page Google vient de s'ouvrir (Chrome, Safari…) : choisissez votre compte et autorisez l'accès, puis revenez ici.
-    {% else %}Ouvrez le lien ci-dessous, choisissez votre compte et autorisez l'accès, puis revenez ici.{% endif %}</p>
-  <p class="small">Page non ouverte ou fermée par erreur ?
-    <a href="{{ auth.url }}" target="_blank" rel="noopener">Ouvrir la connexion Google</a>
-    — de préférence dans Chrome ou Safari : Google refuse souvent la connexion dans un navigateur intégré.</p>
-  <p class="small muted">Si Google affiche « Google n'a pas validé cette application », cliquez sur « Continuer » (application personnelle).</p>
-  <p class="small">Google affiche « <strong>Accès bloqué</strong> : … n'a pas terminé la procédure de validation » (erreur 403 access_denied) ?
-    L'application OAuth est en mode « Test » : ouvrez <a href="{{ links.audience }}" target="_blank" rel="noopener">Audience</a>
-    → « Publier l'application » (ou ajoutez votre adresse aux utilisateurs test), puis cliquez à nouveau sur « Se connecter à Google Drive ».</p>
-  <button class="link small" hx-post="/drive/connect/cancel" hx-target="#drive-auth">Annuler la connexion en cours</button>
+<div class="notice bar" hx-get="/fragments/drive-auth" hx-trigger="every 2s" hx-target="#drive-auth" hx-swap="innerHTML">
+  <div>
+    <p><span class="spinner" aria-hidden="true"></span> <strong>Connexion en cours dans votre navigateur.</strong>
+      {% if auth.browser_opened %}Une page Google vient de s'ouvrir (Chrome, Safari…) : choisissez votre compte, autorisez l'accès, puis revenez ici.
+      {% else %}Ouvrez le lien ci-dessous, choisissez votre compte, autorisez l'accès, puis revenez ici.{% endif %}</p>
+    <p class="small">Page fermée ou pas ouverte ? <a class="ext" href="{{ auth.url }}" target="_blank" rel="noopener">Ouvrir la connexion Google</a>
+      (de préférence dans Chrome ou Safari).</p>
+    <p class="small muted">« Google n'a pas validé cette application » : cliquez sur « Continuer ».
+      « <strong>Accès bloqué</strong> » (erreur 403 access_denied) : l'application OAuth est en mode Test — ouvrez
+      <a href="{{ links.audience }}" target="_blank" rel="noopener">Audience</a>, « Publier l'application » (ou ajoutez votre adresse
+      aux utilisateurs test), puis relancez la connexion.</p>
+  </div>
+  <button type="button" class="link small" hx-post="/drive/connect/cancel" hx-target="#drive-auth">Annuler</button>
 </div>
 {% elif auth.status == 'done' %}
-<div class="flash ok">✅ {{ auth.message }}</div>
+<div class="flash ok" role="status">✅ {{ auth.message }}</div>
 {% elif auth.status == 'error' %}
-<div class="flash err">{{ auth.message }}</div>
+<div class="flash err" role="alert">{{ auth.message }}</div>
 {% endif %}

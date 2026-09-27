@@ -6,7 +6,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from .. import db, subjects
+from .. import calendar_ics, db, subjects
 from ..pipeline import pipeline
 from ..web import redirect, render
 
@@ -22,16 +22,19 @@ def _subject_or_404(sid: int) -> dict:
 
 @router.get("/cours", response_class=HTMLResponse)
 def courses_page(request: Request):
+    """Liste des matières (une ligne chacune) + intitulés de l'emploi du temps encore sans matière."""
     rows = []
     for s in db.list_subjects():
         sessions = subjects.sessions_with_course(s["id"])
         rows.append({
             **s,
             "n_sessions": len(sessions),
-            "n_annotated": sum(1 for r in sessions if subjects.annotated_path(r["id"]).exists()),
             "last": sessions[-1] if sessions else None,
+            "n_proposed": len(subjects.get_proposed_terms(s)),
         })
     return render(request, "courses.html", rows=rows,
+                  unmapped=calendar_ics.unmapped_summaries(),
+                  subjects_list=db.list_subjects(),
                   notion_seances_url=db.get_setting("notion_seances_url"),
                   drive_root_url=db.get_setting("drive_root_url"))
 
@@ -45,7 +48,7 @@ def subject_courses(request: Request, sid: int, seance: int | None = None):
     others = [r for r in db.list_recordings(sid) if not subjects.course_path(r["id"]).exists()]
     selected = next((r for r in sessions if r["id"] == seance), sessions[-1] if sessions else None)
     return render(request, "course_subject.html", subject=subject, sessions=sessions, others=others,
-                  selected=selected)
+                  selected=selected, n_proposed=len(subjects.get_proposed_terms(subject)))
 
 
 @router.get("/fragments/cours/seance/{rid}", response_class=HTMLResponse)
