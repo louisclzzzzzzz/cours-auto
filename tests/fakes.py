@@ -1,4 +1,4 @@
-"""Faux services Google Drive et Notion (en mémoire) pour tester la publication sans réseau."""
+"""Faux services Google Drive et Notion (en mémoire) et petits documents de test (PDF, PPTX)."""
 
 from __future__ import annotations
 
@@ -171,3 +171,55 @@ def title_of(page: dict) -> str:
 def notion_like(md: str) -> str:
     """Approximation de ce que renvoie Notion en lecture (maths inline $`…`$)."""
     return re.sub(r"(?<!\$)\$([^$\n]+?)\$(?!\$)", r"$`\1`$", md)
+
+
+# --- Documents de test (supports de cours) --------------------------------------------------------
+
+
+def make_pdf(path, pages: list[list[str]]) -> bytes:
+    """PDF minimal (Helvetica, une ligne de texte par élément) lisible par pypdf."""
+
+    def esc(text: str) -> str:
+        return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+    body: dict[int, bytes] = {1: b"<< /Type /Catalog /Pages 2 0 R >>",
+                              3: b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"}
+    page_ids = []
+    for i, lines in enumerate(pages):
+        pid, cid = 4 + 2 * i, 5 + 2 * i
+        page_ids.append(pid)
+        ops = ["BT", "/F1 18 Tf", "72 760 Td", "22 TL", *[f"({esc(line)}) Tj T*" for line in lines], "ET"]
+        stream = "\n".join(ops).encode("cp1252")
+        body[pid] = (f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> "
+                     f"/Contents {cid} 0 R >>").encode()
+        body[cid] = b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream"
+    body[2] = f"<< /Type /Pages /Kids [{' '.join(f'{p} 0 R' for p in page_ids)}] /Count {len(pages)} >>".encode()
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = {}
+    for i in sorted(body):
+        offsets[i] = len(out)
+        out += f"{i} 0 obj\n".encode() + body[i] + b"\nendobj\n"
+    xref, size = len(out), max(body) + 1
+    out += f"xref\n0 {size}\n0000000000 65535 f \n".encode()
+    out += b"".join(f"{offsets[i]:010d} 00000 n \n".encode() for i in range(1, size))
+    out += f"trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    path.write_bytes(bytes(out))
+    return bytes(out)
+
+
+def make_pptx(path, slides: list[tuple[str, list[str], str]]) -> bytes:
+    """Présentation : (titre, puces, notes de l'intervenant) par diapositive."""
+    from pptx import Presentation
+
+    prs = Presentation()
+    for title, bullets, notes in slides:
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
+        slide.shapes.title.text = title
+        frame = slide.placeholders[1].text_frame
+        frame.text = bullets[0]
+        for bullet in bullets[1:]:
+            frame.add_paragraph().text = bullet
+        if notes:
+            slide.notes_slide.notes_text_frame.text = notes
+    prs.save(str(path))
+    return path.read_bytes()

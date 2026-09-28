@@ -1,11 +1,12 @@
-"""Page « Enregistrements » : liste, détail, relances d'étapes, écoute, transcription, suppression."""
+"""Historique : liste, détail (avancement, relances, supports de cours), écoute, transcription, suppression."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 
-from .. import config, db, recorder, subjects
+from .. import config, db, recorder, subjects, supports
 from ..markdown_utils import replace_title
 from ..pipeline import BUSY_STATUSES, STEP_LABELS, pipeline
 from ..textutils import fmt_duration, parse_date
@@ -103,6 +104,19 @@ def status_context(rec: dict) -> dict:
     }
 
 
+def supports_context(rid: int) -> dict:
+    info = supports.summary(rid)
+    return {"supports": info["supports"], "supports_reading": info["reading"], "supports_unused": info["unused"],
+            "support_accept": supports.ACCEPT}
+
+
+def _support_or_404(rid: int, sid: int) -> dict:
+    sup = db.get_support(sid)
+    if not sup or sup["recording_id"] != rid:
+        raise HTTPException(404, "Support introuvable.")
+    return sup
+
+
 @router.get("/enregistrements", response_class=HTMLResponse)
 def list_page(request: Request):
     return render(request, "recordings.html", **_list_context())
@@ -121,6 +135,7 @@ def detail_page(request: Request, rid: int):
     return render(
         request, "recording_detail.html",
         **status_context(rec),
+        **supports_context(rid),
         transcript=transcript,
         subjects_list=db.list_subjects(),
         logs=db.list_logs(rid, 60),
@@ -130,6 +145,54 @@ def detail_page(request: Request, rid: int):
 @router.get("/fragments/recording/{rid}/status", response_class=HTMLResponse)
 def status_fragment(request: Request, rid: int):
     return render(request, "partials/recording_status.html", **status_context(_get(rid)))
+
+
+@router.get("/fragments/recording/{rid}/supports", response_class=HTMLResponse)
+def supports_fragment(request: Request, rid: int):
+    return render(request, "partials/supports.html", **status_context(_get(rid)), **supports_context(rid))
+
+
+@router.post("/enregistrements/{rid}/supports")
+async def add_supports(rid: int, files: list[UploadFile] = File(...)):
+    _get(rid)
+    added, errors = await run_in_threadpool(supports.add_many, rid, [(f.filename, f.file) for f in files])
+    target = f"/enregistrements/{rid}#supports"
+    if not added:
+        return redirect(target, " ".join(errors) or "Aucun fichier reçu.", "err")
+    message = ("Support ajouté" if len(added) == 1 else f"{len(added)} supports ajoutés") + " : lecture en cours."
+    return redirect(target, " ".join([message, *errors]), "warn" if errors else "ok")
+
+
+@router.get("/enregistrements/{rid}/supports/{sid}")
+def support_file(rid: int, sid: int):
+    sup = _support_or_404(rid, sid)
+    return FileResponse(supports.file_path(sup), filename=sup["filename"], content_disposition_type="inline")
+
+
+@router.get("/enregistrements/{rid}/supports/{sid}/texte")
+def support_text(rid: int, sid: int):
+    path = supports.text_path(_support_or_404(rid, sid))
+    if not path.exists():
+        raise HTTPException(404, "Le texte de ce support n'a pas encore été lu.")
+    return PlainTextResponse(path.read_text(encoding="utf-8"))
+
+
+@router.post("/enregistrements/{rid}/supports/{sid}/relire")
+def reread_support(rid: int, sid: int):
+    sup = _support_or_404(rid, sid)
+    if sup["status"] in ("pending", "extracting"):
+        return redirect(f"/enregistrements/{rid}#supports", "La lecture de ce support est déjà en cours.")
+    supports.text_path(sup).unlink(missing_ok=True)
+    db.update_support(sid, status="pending", error=None)
+    supports.extract_in_background(sid)
+    return redirect(f"/enregistrements/{rid}#supports", "Nouvelle lecture du support lancée.")
+
+
+@router.post("/enregistrements/{rid}/supports/{sid}/delete")
+def delete_support(rid: int, sid: int):
+    sup = _support_or_404(rid, sid)
+    supports.remove(sid)
+    return redirect(f"/enregistrements/{rid}#supports", f"Support « {sup['filename']} » retiré.")
 
 
 @router.get("/enregistrements/{rid}/audio")

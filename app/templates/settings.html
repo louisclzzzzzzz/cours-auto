@@ -130,7 +130,8 @@
     <h2 id="mistral-title"><span aria-hidden="true">🤖</span> Mistral</h2>
     {{ state(*ms) }}
   </div>
-  <p class="small muted">Transcription ({{ s.transcription_model }}) et mise en forme des cours ({{ s.llm_model }}).</p>
+  <p class="small muted">Transcription ({{ s.transcription_model }}), mise en forme des cours ({{ s.llm_model }})
+    et lecture des supports de cours ({{ s.ocr_model }}).</p>
   {% if not mistral_key %}<p class="notice">Ajoutez la clé <code>MISTRAL_API_KEY</code> dans le fichier <code>.env</code>, puis relancez l'app.</p>{% endif %}
   <button type="button" hx-post="/parametres/mistral/test" hx-target="#mistral-test">Tester la clé</button>
   <div id="mistral-test" aria-live="polite"></div>
@@ -141,10 +142,12 @@
         <input type="text" id="llm_model" name="llm_model" value="{{ s.llm_model }}" list="models"></div>
       <div class="field"><label for="transcription_model">Modèle de transcription</label>
         <input type="text" id="transcription_model" name="transcription_model" value="{{ s.transcription_model }}" list="models"></div>
+      <div class="field"><label for="ocr_model">Modèle de lecture des supports (OCR)</label>
+        <input type="text" id="ocr_model" name="ocr_model" value="{{ s.ocr_model }}" list="models"></div>
       <datalist id="models">
         <option value="mistral-small-2603" label="Mistral Small 4"><option value="mistral-small-latest">
         <option value="mistral-medium-latest"><option value="mistral-large-latest">
-        <option value="voxtral-mini-latest">
+        <option value="voxtral-mini-latest"><option value="mistral-ocr-latest">
       </datalist>
       <div class="field"><label for="llm_reasoning_effort">Raisonnement du modèle (<code>reasoning_effort</code>)</label>
         <select id="llm_reasoning_effort" name="llm_reasoning_effort">

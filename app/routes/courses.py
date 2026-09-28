@@ -60,7 +60,8 @@ def session_preview(request: Request, rid: int, version: str = "auto"):
     use_annot = has_annot and version != "original"
     return render(request, "partials/session_preview.html", rec=rec, has_annot=has_annot, use_annot=use_annot,
                   md=subjects.read_course(rid, prefer_annotated=use_annot) or "",
-                  old_pages=db.loads(rec.get("notion_old_pages"), []))
+                  old_pages=db.loads(rec.get("notion_old_pages"), []),
+                  n_supports=len(db.list_supports(rid)))
 
 
 @router.get("/cours/{sid}/complet", response_class=HTMLResponse)

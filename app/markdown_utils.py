@@ -333,7 +333,8 @@ KEYWORD_CALLOUTS = [
     (re.compile(r"^\*\*(Remarque|Note|Rappel|Notation)", re.I), "📝", "gray_bg"),
     (re.compile(r"^\*\*(Attention|Important|Pi[èe]ge|⚠️)", re.I), "⚠️", "red_bg"),
 ]
-EMOJI_COLORS = {"💡": "yellow_bg", "⚠️": "orange_bg", "⚠": "orange_bg", "📌": "blue_bg", "❗": "red_bg", "✅": "green_bg"}
+EMOJI_COLORS = {"💡": "yellow_bg", "⚠️": "orange_bg", "⚠": "orange_bg", "📌": "blue_bg", "❗": "red_bg", "✅": "green_bg",
+                "📑": "pink_bg"}  # 📑 : contenu tiré du support de cours, non dit à l'oral
 GENERIC_ICON = "💬"
 
 

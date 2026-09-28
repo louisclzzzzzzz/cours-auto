@@ -36,6 +36,16 @@ FIDELITY_REMINDER = (
     "formule ou notation non dictée, correction de transcription) doit figurer dans un bloc « > 💡 **Complément** : … », "
     "jamais dans le texte du cours."
 )
+SUPPORT_REMINDER = (
+    "Support de cours fourni (règle 9) : le cours ne contient que ce qui a été DIT. Exceptions au rappel "
+    "précédent : ce que l'enseignant aborde s'écrit avec les termes, formules et énoncés exacts du support, et un "
+    "terme mal transcrit que le support confirme se corrige sans bloc Complément (jamais de mention de page ou de "
+    "diapositive). Ce qui n'est QUE sur le support ne s'écrit pas (ni section, ni phrase, ni parenthèse). Oral ≠ "
+    "support : écris la version orale et ajoute « > ⚠️ **Écart avec le support** : le support indique … ; en cours, "
+    "l'enseignant retient … »."
+)
+SUPPORT_GAPS_TITLE = "Sur le support, non abordé en cours"
+SUPPORT_MAX_CHARS = 60_000  # texte de support transmis par appel ; au-delà, chaque document est raccourci
 
 
 class LLMError(RuntimeError):
@@ -162,6 +172,8 @@ def _meta_block(meta: dict) -> str:
     ]
     if meta.get("intitule_ade"):
         lines.append(f"- Intitulé dans l'emploi du temps : {meta['intitule_ade']}")
+    if meta.get("supports"):
+        lines.append(f"- Support de cours fourni : {', '.join(meta['supports'])}")
     return "\n".join(lines)
 
 
@@ -219,13 +231,19 @@ def remove_sections(md: str, titles: tuple[str, ...]) -> str:
     return "\n".join(out)
 
 
-def _user_message(meta: dict, state: str, instructions: list[str], transcript: str) -> str:
+def _user_message(meta: dict, state: str, instructions: list[str], transcript: str, support: str = "") -> str:
+    reminders = [FIDELITY_REMINDER, SUPPORT_REMINDER] if support else [FIDELITY_REMINDER]
+    support_part = (
+        "# Support de cours (diapositives / documents de l'enseignant, texte extrait automatiquement)\n"
+        f"{support}\n\n" if support else ""
+    )
     return (
         "# Métadonnées de la séance\n"
         f"{_meta_block(meta)}\n\n"
         "# État de la matière (mémoire des séances précédentes)\n"
         f"{state.strip() or '(vide : première séance enregistrée pour cette matière)'}\n\n"
-        "# Consignes\n" + "\n".join(f"- {i}" for i in [*instructions, FIDELITY_REMINDER]) + "\n\n"
+        "# Consignes\n" + "\n".join(f"- {i}" for i in [*instructions, *reminders]) + "\n\n"
+        f"{support_part}"
         "# Transcription\n"
         f"{transcript}"
     )
@@ -243,7 +261,8 @@ def finalize_course(md: str, meta: dict) -> tuple[str, str]:
         flags=re.I,
     ).strip() or "Séance"
     md = replace_title(md, f"{prefix} – {short}")
-    info = f"*{meta['matiere']} — {meta['type']} {meta['numero']} du {meta['date']} — Enseignant : {meta['enseignant']}*"
+    info = f"*{meta['matiere']} — {meta['type']} {meta['numero']} du {meta['date']} — Enseignant : {meta['enseignant']}"
+    info += (f" — Support : {', '.join(meta['supports'])}*" if meta.get("supports") else "*")
     lines = md.split("\n")
     idx = next((i for i, l in enumerate(lines) if l.startswith("# ")), 0)
     if not any(l.startswith(f"*{meta['matiere']} — ") for l in lines[idx + 1 : idx + 4]):
@@ -251,13 +270,35 @@ def finalize_course(md: str, meta: dict) -> tuple[str, str]:
     return normalize_course_markdown("\n".join(lines)), short
 
 
+def _split_support(docs: list[dict] | None, transcript: str, meta: dict,
+                   on_progress: Callable[[str], None] | None) -> tuple[str, str]:
+    """(pages abordées à l'oral, pages utiles jamais abordées) : textes pour la mise en forme et la section finale."""
+    if not docs or not any(doc["pages"] for doc in docs):
+        return "", ""
+    if on_progress:
+        on_progress("Support : repérage des pages abordées à l'oral…")
+    try:
+        selection = align_support(docs, transcript, meta)
+    except Exception as exc:  # noqa: BLE001 - repli : tout le support, sans section finale
+        log.warning("Repérage des pages du support impossible (%s) : support transmis en entier", exc)
+        return render_support(docs), ""
+    spoken = render_support(docs, {i: sel["abordees"] for i, sel in selection.items()})
+    unspoken = render_support(docs, {i: sel["non_abordees"] for i, sel in selection.items()})
+    return spoken, unspoken
+
+
 def format_course(
     transcript_data: dict,
     state: str,
     meta: dict,
     on_progress: Callable[[str], None] | None = None,
+    support_docs: list[dict] | None = None,
 ) -> tuple[str, str]:
-    """Renvoie (cours Markdown, titre court)."""
+    """Renvoie (cours Markdown, titre court).
+
+    `support_docs` : supports de cours découpés en pages (voir supports.documents). Seules les pages abordées à
+    l'oral sont transmises à la mise en forme ; les autres, si elles sont utiles, sont résumées en fin de cours.
+    """
     from .transcribe import build_paragraphs, paragraph_line, speaker_labels, speakers_header
 
     paragraphs = build_paragraphs(transcript_data)
@@ -268,6 +309,8 @@ def format_course(
     header = speakers_header(shares)
     max_chars = db.get_int_setting("llm_chunk_chars") or 60000
     chunks = chunk_transcript(paragraphs, lines, max_chars)
+    support, unspoken = _split_support(support_docs, (header + "\n\n" if header else "") + "\n\n".join(lines),
+                                       meta, on_progress)
     system = {"role": "system", "content": load_prompt("format_course")}
     title_rule = (
         f"La première ligne doit être exactement : `# {heading_prefix(meta)} – <titre court et explicite de la séance>`."
@@ -277,8 +320,13 @@ def format_course(
         user = _user_message(
             meta, state, [title_rule, "Rédige le cours complet de cette séance à partir de la transcription ci-dessous."],
             (header + "\n\n" if header else "") + "\n\n".join(chunks[0]),
+            support,
         )
         md = complete([system, {"role": "user", "content": user}], label="Mise en forme du cours")
+        if unspoken:
+            if on_progress:
+                on_progress("Mise en forme : notions du support non abordées")
+            md = insert_before_final_sections(strip_wrapping_fence(md), support_gaps(md, unspoken, meta))
         return finalize_course(md, meta)
 
     n = len(chunks)
@@ -305,7 +353,7 @@ def format_course(
                 "et poursuis la numérotation des sections.",
                 no_final,
             ]
-        user = _user_message(meta, state, instructions, (header + "\n\n" if header else "") + "\n\n".join(chunk))
+        user = _user_message(meta, state, instructions, (header + "\n\n" if header else "") + "\n\n".join(chunk), support)
         part = complete([system, {"role": "user", "content": user}], label=f"Mise en forme (partie {i}/{n})")
         part = strip_wrapping_fence(part)
         if i > 1:
@@ -313,6 +361,10 @@ def format_course(
         parts.append(remove_sections(part, FINAL_SECTIONS).strip())
 
     body = "\n\n".join(parts)
+    if unspoken:
+        if on_progress:
+            on_progress("Mise en forme : notions du support non abordées")
+        body = insert_before_final_sections(body, support_gaps(body, unspoken, meta))
     if on_progress:
         on_progress("Mise en forme : points clés")
     key_points = complete(
@@ -323,6 +375,85 @@ def format_course(
         label="Points clés",
     )
     return finalize_course(body + "\n\n" + strip_wrapping_fence(key_points).strip(), meta)
+
+
+def render_support(docs: list[dict], selection: dict[int, set[int]] | None = None,
+                   max_chars: int = SUPPORT_MAX_CHARS) -> str:
+    """Texte des supports pour le LLM : toutes les pages, ou seulement `selection` (n° de document → n° de pages)."""
+    chosen = []
+    for i, doc in enumerate(docs):
+        pages = [(label, text) for n, (label, text) in enumerate(doc["pages"], 1)
+                 if selection is None or n in selection.get(i, set())]
+        if pages:
+            chosen.append((i, doc["name"], "\n\n".join(f"[{label}]\n{text or '(vide)'}" for label, text in pages)))
+    total = sum(len(text) for *_, text in chosen) or 1
+    blocks = []
+    for i, name, text in chosen:
+        budget = len(text) if total <= max_chars else max(2000, int(max_chars * len(text) / total))
+        if len(text) > budget:
+            text = text[:budget].rsplit("\n", 1)[0] + "\n[… fin du document non transmise : trop long …]"
+        name = name.replace('"', "'")
+        blocks.append(f'<support n="{i + 1}" fichier="{name}">\n{text}\n</support>')
+    return "\n\n".join(blocks)
+
+
+def align_support(docs: list[dict], transcript: str, meta: dict) -> dict[int, dict[str, set[int]]]:
+    """Pages de chaque support abordées à l'oral / au contenu utile jamais abordé (titre, plan… : ni l'un ni l'autre)."""
+    out = complete(
+        [
+            {"role": "system", "content": load_prompt("support_alignment")},
+            {"role": "user", "content": f"# Métadonnées\n{_meta_block(meta)}\n\n# Support de cours\n"
+                                        f"{render_support(docs)}\n\n# Transcription\n{transcript}"},
+        ],
+        json_mode=True,
+        label="Support : pages abordées",
+    )
+    data = json.loads(strip_wrapping_fence(out))
+    result: dict[int, dict[str, set[int]]] = {}
+    for i, doc in enumerate(docs):
+        entry = data.get(str(i + 1)) if isinstance(data, dict) else None
+        entry = entry if isinstance(entry, dict) else {}
+
+        def pages(key: str) -> set[int]:
+            values = entry.get(key) if isinstance(entry.get(key), list) else []
+            return {int(v) for v in values if str(v).strip().isdigit() and 1 <= int(v) <= len(doc["pages"])}
+
+        spoken = pages("abordees")
+        result[i] = {"abordees": spoken, "non_abordees": pages("non_abordees") - spoken}
+    return result
+
+
+def support_gaps(course_md: str, support: str, meta: dict) -> str:
+    """Section « Sur le support, non abordé en cours » (vide s'il n'y a rien de substantiel)."""
+    out = complete(
+        [
+            {"role": "system", "content": load_prompt("support_gaps")},
+            {"role": "user", "content": f"# Métadonnées\n{_meta_block(meta)}\n\n# Support de cours\n{support}\n\n"
+                                        f"# Cours rédigé\n{course_md}"},
+        ],
+        label="Support : notions non abordées",
+    )
+    out = strip_wrapping_fence(out).strip()
+    if not out or out.upper().startswith("RIEN") or "- " not in out:
+        return ""
+    out = remove_first_h1(out).strip()
+    lines = out.split("\n")
+    if not HEADING_RE.match(lines[0].strip()):
+        lines.insert(0, "")
+    lines[0] = f"## {SUPPORT_GAPS_TITLE}"
+    return "\n".join(lines).strip()
+
+
+def insert_before_final_sections(md: str, section: str) -> str:
+    """Insère une section juste avant « Points clés » / « À retenir pour la suite » (sinon à la fin)."""
+    if not section:
+        return md
+    lines = md.split("\n")
+    for i, (line, in_code) in enumerate(iter_lines_with_code_state(md)):
+        m = None if in_code else HEADING_RE.match(line.strip())
+        if m and len(m.group(1)) == 2 and m.group(2).strip().lower().rstrip(" :") in FINAL_SECTIONS:
+            return "\n".join([*lines[:i], section, "", *lines[i:]])
+    return md.rstrip() + "\n\n" + section + "\n"
 
 
 # --- Appel n°2 : état de matière -----------------------------------------------------------------

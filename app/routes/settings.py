@@ -76,6 +76,7 @@ def save_models(
     llm_max_tokens: int = Form(32000),
     llm_reasoning_effort: str = Form("high"),
     audio_bitrate: str = Form("48k"),
+    ocr_model: str = Form(""),
 ):
     if not re.fullmatch(r"\d{2,3}k", audio_bitrate.strip()):
         return redirect("/parametres#mistral", "Débit audio invalide (ex. 48k).", "err")
@@ -84,6 +85,7 @@ def save_models(
     db.set_setting("llm_model", llm_model.strip() or config.DEFAULT_SETTINGS["llm_model"])
     db.set_setting("llm_reasoning_effort", llm_reasoning_effort)
     db.set_setting("transcription_model", transcription_model.strip() or "voxtral-mini-latest")
+    db.set_setting("ocr_model", ocr_model.strip() or config.DEFAULT_SETTINGS["ocr_model"])
     db.set_setting("transcription_language", transcription_language.strip())
     db.set_setting("llm_chunk_chars", str(max(llm_chunk_chars, 5000)))
     db.set_setting("llm_max_tokens", str(max(llm_max_tokens, 2000)))

@@ -43,6 +43,7 @@ DEFAULT_SETTINGS: dict[str, str] = {
     # « high » = le modèle réfléchit avant de répondre (plus lent, plus de tokens). Vide = paramètre non envoyé.
     "llm_reasoning_effort": "high",
     "transcription_model": "voxtral-mini-latest",
+    "ocr_model": "mistral-ocr-latest",  # lecture des supports de cours (PDF, PPTX, DOCX)
     "transcription_language": "fr",
     # Au-delà de cette taille (caractères), la transcription est découpée en blocs pour le LLM.
     "llm_chunk_chars": "60000",

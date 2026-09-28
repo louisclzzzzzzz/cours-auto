@@ -11,7 +11,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from .. import calendar_ics, db, recorder, subjects
+from .. import calendar_ics, db, recorder, subjects, supports
 from ..pipeline import BUSY_STATUSES, STEP_LABELS, pipeline
 from ..textutils import parse_date
 from ..web import consent_reminder_visible, redirect, render
@@ -92,6 +92,7 @@ def home(request: Request, day: str | None = None, state: str | None = None, cod
         **latest_context(),
         active=_active_recordings(),
         consent=consent_reminder_visible(),
+        support_accept=supports.ACCEPT,
     )
 
 
@@ -221,8 +222,10 @@ async def api_import(
     teacher: str = Form(""),
     session_date: str = Form(""),
     event: str = Form(""),
+    support: list[UploadFile] = File(default=[]),
 ):
-    """Import d'un fichier audio (téléphone, dictaphone…) : traité comme un enregistrement."""
+    """Import d'un fichier audio (téléphone, dictaphone…) : traité comme un enregistrement.
+    `support` : diapositives / PDF du cours, joints avant le début du traitement."""
     sid = int(subject_id) if subject_id.strip().isdigit() else None
     if not sid and subject_name.strip():
         sid = subjects.create_subject(subject_name)
@@ -258,8 +261,22 @@ async def api_import(
         warning = "Plus de 3 h d'audio : au-delà de la limite d'une requête de transcription Voxtral."
         db.log(rid, warning, "warning")
     db.update_recording(rid, elapsed_seconds=duration, ended_at=db.now_iso())
+    added, errors = await run_in_threadpool(supports.add_many, rid, [(f.filename, f.file) for f in support])
+    if errors:
+        warning = " ".join([warning or "", "Support ignoré :", *errors]).strip()
     pipeline.submit("recording", rid, "finalize")
-    return {"id": rid, "duration": duration, "warning": warning}
+    return {"id": rid, "duration": duration, "warning": warning, "supports": len(added)}
+
+
+@router.post("/api/recordings/{rid}/supports")
+async def api_add_supports(rid: int, files: list[UploadFile] = File(...)):
+    """Support de cours (diapositives, PDF) joint à un enregistrement ; lu aussitôt en arrière-plan."""
+    if not db.get_recording(rid):
+        raise HTTPException(404, "Enregistrement introuvable.")
+    added, errors = await run_in_threadpool(supports.add_many, rid, [(f.filename, f.file) for f in files])
+    if errors and not added:
+        raise HTTPException(400, " ".join(errors))
+    return {"supports": [{"id": x["id"], "filename": x["filename"]} for x in added], "errors": errors}
 
 
 @router.post("/api/recordings/{rid}/segments")

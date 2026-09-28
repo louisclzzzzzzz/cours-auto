@@ -44,7 +44,7 @@ Ouvrez <http://127.0.0.1:8000>. (Autre port : `PORT=8001 uv run cours-auto`.)
 1. Créez une clé sur <https://console.mistral.ai/api-keys> et mettez-la dans `MISTRAL_API_KEY`.
 2. Dans **Paramètres → Mistral**, « Tester la clé ». Modèles par défaut : **Mistral Small 4** `mistral-small-2603` (mise en forme, contexte 256 k tokens ; alias `mistral-small-latest`) et `voxtral-mini-latest` (transcription, jusqu'à ~3 h par requête). Le modèle se change dans Paramètres (ex. `mistral-large-latest`). Small 4 « raisonne » avant de rédiger : l'app envoie `reasoning_effort=high` par défaut (le seul autre choix accepté par Small 4 est `none`, réponse directe). La réflexion rend chaque appel plus lent et consomme des tokens en plus (une marge de 16 000 tokens lui est réservée) ; réglable dans **Paramètres → Mistral → Modèles et réglages avancés**.
 
-Coût indicatif : ~0,003 $/min de transcription (≈ 0,36 $ pour 2 h), LLM négligeable.
+Coût indicatif : ~0,003 $/min de transcription (≈ 0,36 $ pour 2 h), LLM négligeable ; lecture d'un support de cours par OCR : quelques centimes (≈ 4 $ les 1 000 pages avec OCR 4, soit ≈ 0,16 $ pour 40 diapositives).
 
 ## 4. Emploi du temps (ADE)
 
@@ -112,10 +112,19 @@ Ajoutez **une seule fois** le Google Doc « <Matière> – NotebookLM » comme s
 
 1. **Enregistrer** (accueil) : ① choisissez le cours — le créneau en cours est présélectionné ; sinon cliquez sur un créneau, changez de jour (‹ ›, ou « Voir le prochain jour de cours » les jours sans cours) ou prenez « Autre cours » (hors emploi du temps) — puis ② **Démarrer**. Seuls les boutons utiles s'affichent ensuite (Pause / Reprendre / Arrêter) et le choix du cours est verrouillé pendant l'enregistrement. Le micro se choisit et se teste (« Tester », vumètre) sous le bouton.
    **Importer un fichier audio…** (même carte) : pour un cours enregistré avec un autre appareil (mp3, m4a, wav, ogg, webm, flac, vidéo mp4…). Choisissez d'abord le cours, cliquez « Importer un fichier audio… » puis sélectionnez le fichier ; une confirmation rappelle le cours choisi. Le fichier d'origine est conservé (`source.<ext>`), converti en MP3 mono 16 kHz puis traité comme un enregistrement. Voxtral accepte jusqu'à ~3 h par fichier.
+   **Support de cours** (diapositives, PDF) : « 📑 Ajouter le support du cours… », sous le cours choisi. Choisi avant de démarrer, il est envoyé dès le début de l'enregistrement (ou avec le fichier audio importé) ; pendant l'enregistrement, il part aussitôt. On peut aussi l'ajouter plus tard depuis l'Historique (voir « Support de cours » ci-dessous).
 2. À l'arrêt, le traitement démarre en arrière-plan (un à la fois) : `finalisation audio → transcription → mise en forme → publication`. Le statut se met à jour en direct sur l'accueil (« Derniers traitements »), dans la barre du haut et dans **Historique**.
-3. **Historique** : la liste de tous les enregistrements ; un clic ouvre l'avancement en 4 étapes (audio → transcription → mise en forme → publication), avec un bouton **Réessayer** qui relance l'étape en échec, l'écoute et la transcription. Sections repliables : corriger les informations (matière, type, numéro…), relancer une étape précise (chaque étape repart des fichiers conservés), supprimer, journal technique.
+3. **Historique** : la liste de tous les enregistrements ; un clic ouvre l'avancement en 4 étapes (audio → transcription → mise en forme → publication), avec un bouton **Réessayer** qui relance l'étape en échec, la section **Support de cours**, l'écoute et la transcription. Sections repliables : corriger les informations (matière, type, numéro…), relancer une étape précise (chaque étape repart des fichiers conservés), supprimer, journal technique.
 4. **Cours** : la liste des matières ; un clic ouvre les séances avec l'aperçu du cours (Markdown + formules), « Ouvrir dans Notion » et, dans le menu **⋯**, l'import des annotations Notion, les fichiers Drive, le téléchargement du Markdown. Au niveau de la matière : « Cours complet », et dans **⋯** le Google Doc NotebookLM, le dossier Drive, l'import des annotations de toutes les séances.
 5. **Cours → Réglages** (une matière) : **termes proposés** après chaque cours (cochez ceux à garder puis « Valider » ; les autres sont écartés), **vocabulaire** (≤ 100 termes envoyés à Voxtral), nom et enseignants, intitulés ADE associés (exact ou expression régulière), **mémoire de la matière** (état, éditable), suppression.
+
+### Support de cours (diapositives, PDF)
+
+Joignez à une séance le support de l'enseignant — **PDF, PPTX ou DOCX** (50 Mo max. ; Keynote, Google Slides ou `.ppt` : exportez en PDF). Plusieurs fichiers sont possibles.
+
+- **Lecture** : dès l'ajout, le texte est lu par l'**OCR Mistral** (`mistral-ocr-latest`, modifiable dans Paramètres → Mistral) : Markdown, tableaux, formules en LaTeX, en-têtes et pieds de page retirés. Pour un PowerPoint, les **notes de l'intervenant** sont ajoutées à chaque diapositive. Si l'OCR échoue, le texte est extrait localement (PDF et PPTX, sans les formules). Le texte lu est consultable (« Texte lu »).
+- **Mise en forme** : le cours reste **celui qui a été dit**. Un premier appel repère les pages du support **abordées à l'oral** ; seules celles-ci sont transmises à la rédaction, qui s'en sert pour écrire exactement les termes (y compris ceux mal transcrits), les formules, notations, définitions et énoncés que l'enseignant présente ou commente. Rien de ce qui n'est que sur le support n'est ajouté au déroulé ; si l'oral contredit une diapositive, le cours suit l'oral et le signale (`> ⚠️ **Écart avec le support** : …`). Les pages utiles **jamais abordées** sont résumées à la fin, dans « Sur le support, non abordé en cours ».
+- **Ajout après coup** : si le cours est déjà rédigé, « Refaire le cours avec le support » relance la mise en forme (dans Notion, une nouvelle page « (v2) » est créée ; l'ancienne et vos annotations sont conservées). La ligne d'en-tête du cours indique le support utilisé.
 
 ### Robustesse de l'enregistrement
 
@@ -130,6 +139,7 @@ Ajoutez **une seule fois** le Google Doc « <Matière> – NotebookLM » comme s
 Les prompts sont des fichiers texte modifiables :
 
 - `prompts/format_course.md` — règles de rédaction (fidélité, compléments balisés `> 💡 **Complément** : …`, passages douteux `⚠️ [passage peu clair ~00:42:10]`, structure et numérotation continues, LaTeX, TD/TP par exercice, questions d'étudiants, « Points clés » / « À retenir pour la suite ») ;
+- `prompts/support_alignment.md` et `prompts/support_gaps.md` — pages du support abordées à l'oral, et résumé de celles qui ne l'ont pas été (seulement si un support est joint) ;
 - `prompts/update_state.md` — mise à jour de l'état de matière (appel n°2, < ~3 000 tokens) ;
 - `prompts/suggest_vocabulary.md` et `prompts/key_points.md`.
 
@@ -149,6 +159,7 @@ data/
     state_before.md / state_after.md
     course.md                  # cours généré
     course_annote.md           # version annotée importée de Notion
+    supports/                  # supports de cours : fichier d'origine + texte lu (.md)
     versions/                  # anciennes versions en cas de nouvelle mise en forme
     meta.json
   subjects/<matière>/
@@ -168,6 +179,7 @@ data/
 | Notion : « Page racine introuvable » | Partagez la page avec l’intégration (§5, étape 2). |
 | Base Notion supprimée par erreur | Elle est recréée à la publication suivante ; les anciennes pages ne sont pas modifiées. |
 | Erreur 429 / 5xx | Relances automatiques avec attente ; sinon « Réessayer » plus tard depuis l'Historique. |
+| Support « illisible » | Document scanné vide ou protégé : « Relire », ou exportez-le à nouveau en PDF. |
 
 ## 11. Développement
 
@@ -182,4 +194,5 @@ Structure : `app/main.py` (FastAPI), `app/routes/` (pages et API), `calendar_ics
 - **Voxtral** (`client.audio.transcriptions.complete`, SDK `mistralai` 2.x) : paramètres `language`, `diarize`, `context_bias` (≤ 100 termes), `timestamp_granularities=["segment"]` ; segments avec `speaker_id`, `start`, `end`. Les termes de `context_bias` **ne doivent contenir ni espace ni virgule** (l'API renvoie une erreur 400) : « graphe pondéré » est envoyé comme `graphe_pondéré`, et l'orthographe d'origine est restaurée dans la transcription lisible. La doc indique que `language` est incompatible avec l'horodatage, mais l'API l'accepte en pratique ; l'app réessaie automatiquement sans `language` si l'API le refuse.
 - **Mistral Small 4** (`mistral-small-2603`) : contexte de 256 k tokens, raisonnement réglable par `reasoning_effort` (Small 4 n'accepte que `high` et `none` ; sans paramètre, il ne réfléchit pas ; les modèles qui ne le proposent pas, comme Large, le refusent : l'app renvoie alors la requête sans ce paramètre ; si la réflexion épuise le budget avant toute réponse, l'appel est relancé avec un budget doublé) ; si une réponse est tronquée (`finish_reason = length`), elle est prolongée avec un message assistant `prefix`.
 - **Notion API `2026-03-11`** : pages créées en Markdown (`POST /v1/pages` avec `markdown`, `allow_async` pour les gros contenus), lecture `GET /v1/pages/:id/markdown`, ajout `PATCH …/markdown` (`insert_content.position`), bases créées via `initial_data_source`, pages créées sous un `data_source_id`, vues via `POST /v1/views`, limite ~3 req/s avec respect de `Retry-After` (429/529). Tests de rendu réels : `$…$` → équations en ligne et `$$` sur des lignes séparées → bloc équation, mais **`$$ … $$` sur une seule ligne est cassé** (normalisé par l'app) et plusieurs lignes `>` deviennent des blocs citation séparés (les encadrés deviennent des *callouts*). En lecture, Notion renvoie les maths sous la forme `` $`…`$ `` et les tableaux en HTML : l'import des annotations les reconvertit en Markdown standard.
+- **OCR Mistral** (`client.ocr.process`, modèle `mistral-ocr-latest`) : fichier envoyé par `client.files.upload(purpose="ocr")` puis lu via `{"type": "file", "file_id": …}` (PDF, PPTX, DOCX ; 50 Mo et 1 000 pages max.), puis supprimé ; `extract_header` / `extract_footer` retirent en-têtes et pieds de page. Essais réels : pour un **PDF**, les formules sortent en LaTeX `\( … \)` (converties en `$…$`) ; pour un **PPTX/DOCX**, `\(` n'est qu'une parenthèse échappée façon Markdown (l'échappement est retiré). Images et tableaux séparés sont signalés par des repères (`![img-0.jpeg](img-0.jpeg)`, `[tbl-0.md](tbl-0.md)`).
 - **Drive API v3** : conversion à l'import Markdown → Google Doc (`text/markdown` vers `application/vnd.google-apps.document`), `files.update` avec média pour remplacer le contenu sur le même identifiant, `webViewLink` mémorisé pour chaque fichier et dossier.

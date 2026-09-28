@@ -15,7 +15,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime
 
-from . import db, llm, recorder, subjects, transcribe
+from . import db, llm, recorder, subjects, supports, transcribe
 from .publish import PublishSkipped
 from .publish import drive as drive_pub
 from .publish import notion as notion_pub
@@ -236,13 +236,19 @@ class Pipeline:
             raise RuntimeError("Transcription absente : relancez d'abord la transcription.")
         state = self._state_before(rid, subject)
         db.update_recording(rid, status="formatting", error_step=None, error_message=None, state_note=None)
-        self._progress(rid, "Mise en forme du cours (LLM)…")
+        # Supports de cours (diapositives, PDF) : lus maintenant s'ils ne l'ont pas encore été.
+        used = supports.prepare(rid, on_progress=lambda m: self._progress(rid, m))
+        self._progress(rid, "Mise en forme du cours (LLM)" + (f" avec {len(used)} support(s) de cours…" if used else "…"))
         meta = llm.session_meta(rec, subject)
-        md, short = llm.format_course(data, state, meta, on_progress=lambda m: self._progress(rid, m))
+        if used:
+            meta["supports"] = [s["filename"] for s in used]
+        md, short = llm.format_course(data, state, meta, on_progress=lambda m: self._progress(rid, m),
+                                      support_docs=supports.documents(used) if used else None)
         if subjects.course_path(rid).exists():
             subjects.archive_versions(rid)  # l'ancienne version (et l'éventuelle version annotée) est conservée
         subjects.course_path(rid).write_text(md, encoding="utf-8")
         db.update_recording(rid, title=short, annotations_imported_at=None)
+        supports.mark_used([s["id"] for s in used])
         recorder.write_meta(rid)
         self._progress(rid, f"Cours rédigé : « {short} ».")
         self._update_state_and_vocabulary(rid, strict=False)

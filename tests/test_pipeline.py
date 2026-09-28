@@ -16,7 +16,7 @@ def fakes(monkeypatch):
     monkeypatch.setattr(transcribe, "transcribe_file", lambda path, vocab, rid=None: {
         "text": "t", "segments": [{"text": "Bonjour, aujourd'hui les graphes.", "start": 0, "end": 3, "speaker_id": "speaker_1"}]})
 
-    def fake_format(data, state, meta, on_progress=None):
+    def fake_format(data, state, meta, on_progress=None, support_docs=None):
         return llm.finalize_course(f"# Séance {meta['numero']}\n\n## Contenu\n\nTexte.", meta)
 
     def fake_state(old, course, meta):

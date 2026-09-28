@@ -41,6 +41,11 @@
   <section class="card recorder" id="recorder" aria-labelledby="rec-title">
     <h2 id="rec-title"><span class="step-num" aria-hidden="true">2</span>Enregistrer<span class="rec-dot" aria-hidden="true"></span></h2>
     <div class="selection empty" id="selection-summary">Choisissez le cours à enregistrer.</div>
+    <div class="support-pick">
+      <button type="button" class="link small" id="btn-support"><span aria-hidden="true">📑</span> Ajouter le support du cours (diapos, PDF)…</button>
+      <input type="file" id="support-file" multiple class="visually-hidden" tabindex="-1" aria-hidden="true" accept="{{ support_accept }}">
+      <ul class="support-list small" id="support-list" aria-live="polite"></ul>
+    </div>
     <div class="chrono" id="chrono" role="timer" aria-label="Durée enregistrée">00:00:00</div>
     <div class="vumeter" aria-hidden="true"><div id="vu-bar"></div></div>
     <div class="rec-buttons">

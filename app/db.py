@@ -101,8 +101,26 @@ CREATE TABLE IF NOT EXISTS logs (
     created_at TEXT NOT NULL
 );
 
+-- Supports de cours (diapositives, PDF…) joints à une séance, lus par OCR pour la mise en forme.
+CREATE TABLE IF NOT EXISTS supports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    recording_id INTEGER NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    stored_name TEXT NOT NULL,
+    size INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    error TEXT,
+    method TEXT,
+    pages INTEGER,
+    chars INTEGER,
+    used_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_recordings_subject ON recordings(subject_id);
 CREATE INDEX IF NOT EXISTS idx_logs_recording ON logs(recording_id);
+CREATE INDEX IF NOT EXISTS idx_supports_recording ON supports(recording_id);
 """
 
 
@@ -331,8 +349,36 @@ def list_recordings_by_status(*statuses: str) -> list[dict]:
 
 
 def delete_recording(recording_id: int) -> None:
+    run("DELETE FROM supports WHERE recording_id = ?", (recording_id,))
     run("DELETE FROM recordings WHERE id = ?", (recording_id,))
     run("DELETE FROM logs WHERE recording_id = ?", (recording_id,))
+
+
+# --- Supports de cours --------------------------------------------------------------------
+
+def insert_support(**fields: Any) -> int:
+    return _insert("supports", fields)
+
+
+def get_support(support_id: int) -> dict | None:
+    return q1("SELECT * FROM supports WHERE id = ?", (support_id,))
+
+
+def list_supports(recording_id: int) -> list[dict]:
+    return q("SELECT * FROM supports WHERE recording_id = ? ORDER BY id", (recording_id,))
+
+
+def list_supports_by_status(*statuses: str) -> list[dict]:
+    marks = ", ".join("?" for _ in statuses)
+    return q(f"SELECT * FROM supports WHERE status IN ({marks}) ORDER BY id", statuses)
+
+
+def update_support(support_id: int, **fields: Any) -> None:
+    _update("supports", support_id, fields)
+
+
+def delete_support(support_id: int) -> None:
+    run("DELETE FROM supports WHERE id = ?", (support_id,))
 
 
 def next_session_number(subject_id: int, course_type: str, exclude_id: int | None = None) -> int:
