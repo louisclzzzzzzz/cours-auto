@@ -48,7 +48,8 @@ def subject_courses(request: Request, sid: int, seance: int | None = None):
     others = [r for r in db.list_recordings(sid) if not subjects.course_path(r["id"]).exists()]
     selected = next((r for r in sessions if r["id"] == seance), sessions[-1] if sessions else None)
     return render(request, "course_subject.html", subject=subject, sessions=sessions, others=others,
-                  selected=selected, n_proposed=len(subjects.get_proposed_terms(subject)))
+                  selected=selected, n_proposed=len(subjects.get_proposed_terms(subject)),
+                  drive_automation=db.get_setting("drive_writer") == "automatisation")
 
 
 @router.get("/fragments/cours/seance/{rid}", response_class=HTMLResponse)

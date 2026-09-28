@@ -101,10 +101,17 @@ def test_mistral(request: Request):
 
 @router.post("/parametres/drive")
 def save_drive(drive_root_name: str = Form("Cours M1"), drive_notebooklm: str = Form(""),
-               drive_upload_sources: str = Form("")):
+               drive_upload_sources: str = Form(""), drive_writer: str = Form("app")):
+    if drive_writer not in ("app", "automatisation"):
+        return redirect("/parametres#drive", "Mode de rédaction inconnu.", "err")
     db.set_setting("drive_root_name", drive_root_name.strip() or "Cours M1")
     db.set_setting("drive_notebooklm", "1" if drive_notebooklm else "0")
     db.set_setting("drive_upload_sources", "1" if drive_upload_sources else "0")
+    db.set_setting("drive_writer", drive_writer)
+    if drive_writer == "automatisation":
+        return redirect("/parametres#drive", "Mode automatisation : les prochaines transcriptions (et leurs supports) "
+                                             "seront déposées dans Drive ; l'app n'écrit plus les séances, le cours "
+                                             "complet, _etat.md ni le Google Doc.")
     return redirect("/parametres#drive", "Options Drive enregistrées.")
 
 

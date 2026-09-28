@@ -55,7 +55,13 @@
     <h2 id="drive-title"><span aria-hidden="true">📁</span> Google Drive</h2>
     {{ state(*gd) }}
   </div>
+  {% if s.drive_writer == 'automatisation' %}
+  <p class="small"><strong>Mode automatisation</strong> : l'app dépose chaque transcription (et ses supports) dans les dossiers
+    « Transcriptions » et « Supports » de la matière ; les séances, le cours complet, <code>_etat.md</code> et le Google Doc
+    sont rédigés par votre automatisation.</p>
+  {% else %}
   <p class="small muted">Archive Markdown de chaque séance et Google Doc par matière pour NotebookLM.</p>
+  {% endif %}
   {% if not drive_status.configured %}
     <p class="notice">{{ drive_status.message }} Suivez la section « Google Drive » du README pour créer <code>credentials.json</code>.</p>
   {% else %}
@@ -94,7 +100,15 @@
   <details class="more">
     <summary>Options</summary>
     <form method="post" action="/parametres/drive">
-      <div class="field"><label for="drive_root_name">Nom du dossier racine</label>
+      <fieldset class="bare">
+        <legend><strong>Qui rédige les cours dans Drive ?</strong></legend>
+        <label class="check"><input type="radio" name="drive_writer" value="app" {{ 'checked' if s.drive_writer != 'automatisation' }}>
+          <span>L'app : fiches de séance, cours complet, <code>_etat.md</code> et Google Doc NotebookLM.</span></label>
+        <label class="check"><input type="radio" name="drive_writer" value="automatisation" {{ 'checked' if s.drive_writer == 'automatisation' }}>
+          <span>Une automatisation externe : l'app dépose seulement chaque transcription dans « Transcriptions » (et les
+            supports dans « Supports ») de la matière, et ne touche plus aux autres fichiers. Notion reste publié par l'app.</span></label>
+      </fieldset>
+      <div class="field" style="margin-top:0.85rem"><label for="drive_root_name">Nom du dossier racine</label>
         <input type="text" id="drive_root_name" name="drive_root_name" value="{{ s.drive_root_name }}"></div>
       <label class="check"><input type="checkbox" name="drive_notebooklm" value="1" {{ 'checked' if s.drive_notebooklm == '1' }}>
         Google Doc pour NotebookLM (mis à jour sur le même fichier à chaque séance)</label>

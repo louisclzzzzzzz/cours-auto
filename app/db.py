@@ -150,6 +150,19 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     "recordings": {
         "origin": "TEXT NOT NULL DEFAULT 'browser'",  # 'browser' (enregistré dans l'app) | 'import' (fichier)
         "source_filename": "TEXT",
+        # Transcription déposée dans <Matière>/Transcriptions/ (mode « automatisation » de Drive)
+        "drive_transcription_id": "TEXT",
+        "drive_transcription_url": "TEXT",
+    },
+    "subjects": {
+        "drive_transcriptions_folder_id": "TEXT",
+        "drive_transcriptions_folder_url": "TEXT",
+        "drive_supports_folder_id": "TEXT",
+        "drive_supports_folder_url": "TEXT",
+    },
+    "supports": {  # copie déposée dans <Matière>/Supports/
+        "drive_id": "TEXT",
+        "drive_url": "TEXT",
     },
 }
 

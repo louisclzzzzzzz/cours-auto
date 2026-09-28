@@ -53,6 +53,10 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "drive_root_name": "Cours M1",
     "drive_upload_sources": "0",
     "drive_notebooklm": "1",
+    # Qui rédige les cours dans Drive : « app » (séances, cours complet, _etat.md, Google Doc) ou
+    # « automatisation » : l'app dépose seulement transcriptions et supports (dossiers Transcriptions/ et
+    # Supports/ de chaque matière) ; une automatisation externe rédige le reste.
+    "drive_writer": "app",
     "consent_reminder_dismissed": "0",
 }
 

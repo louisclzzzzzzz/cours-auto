@@ -40,7 +40,7 @@ SUB_LABELS = {
     "running": "en cours…",
     "done": "OK",
     "error": "erreur",
-    "skipped": "non configuré",
+    "skipped": "ignoré",
 }
 STEP_LABELS = {
     "finalize": "finalisation audio",
@@ -218,6 +218,18 @@ class Pipeline:
         db.update_recording(rid, status="transcribed")
         n = len(data.get("segments") or [])
         self._progress(rid, f"Transcription terminée ({n} segments).")
+        self._deposit_transcription(rid)
+
+    def _deposit_transcription(self, rid: int) -> None:
+        """Mode automatisation de Drive : la transcription part tout de suite, sans attendre la mise en forme."""
+        if not drive_pub.automation_mode() or not drive_pub.is_configured():
+            return
+        try:
+            drive_pub.deposit_inputs(rid)
+            self._progress(rid, "Transcription déposée dans Drive (dossier Transcriptions).")
+        except Exception as exc:  # noqa: BLE001 - nouvel essai à l'étape de publication
+            db.log(rid, f"Dépôt de la transcription dans Drive impossible pour l'instant : {exc} "
+                        "(nouvel essai à la publication).", "warning")
 
     def _state_before(self, rid: int, subject: dict) -> str:
         """État de matière *avant* cette séance, figé au premier passage (rend l'étape rejouable)."""

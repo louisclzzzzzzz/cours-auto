@@ -21,9 +21,11 @@
             onsubmit="return confirm('Importer vos annotations Notion pour toutes les séances de cette matière ?')">
         <button class="menu-item">Importer mes annotations Notion (toutes les séances)</button>
       </form>
+      {% if not drive_automation %}
       <form method="post" action="/cours/{{ subject.id }}/drive">
         <button class="menu-item">Régénérer le cours complet et le Google Doc sur Drive</button>
       </form>
+      {% endif %}
     {% endcall %}
   </div>
 </div>

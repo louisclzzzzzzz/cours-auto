@@ -2,6 +2,10 @@
 
 Scope `drive.file` uniquement : l'app ne voit que les fichiers qu'elle a créés, donc tous les
 identifiants (dossiers, fichiers) sont stockés en base.
+
+Mode « automatisation » (paramètre `drive_writer`) : l'app dépose seulement les transcriptions et les
+supports de cours (dossiers `Transcriptions/` et `Supports/` de chaque matière) ; une automatisation externe
+rédige les séances, le cours complet, `_etat.md` et le Google Doc NotebookLM, que l'app ne touche plus.
 """
 
 from __future__ import annotations
@@ -26,7 +30,8 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload
 
-from .. import config, db, recorder, subjects
+from .. import config, db, recorder, subjects, supports
+from ..textutils import fmt_duration, fmt_time, fr_date
 from . import PublishSkipped
 
 log = logging.getLogger(__name__)
@@ -400,8 +405,113 @@ def _subject_folders(client: DriveClient, subject: dict) -> dict:
     return {**subject, **fields}
 
 
+def automation_mode() -> bool:
+    return db.get_setting("drive_writer") == "automatisation"
+
+
+TRANSCRIPTIONS_FOLDER = "Transcriptions"
+SUPPORTS_FOLDER = "Supports"
+
+
+def _session_prefix(rec: dict) -> str:
+    """Ex. `2026-09-28_CM03` (date, type et numéro de la séance)."""
+    return f"{rec['session_date']}_{rec['course_type']}{int(rec['session_number'] or 0):02d}"
+
+
+def transcription_filename(rec: dict) -> str:
+    return f"{_session_prefix(rec)}_transcription.txt"
+
+
+def support_filename(rec: dict, sup: dict) -> str:
+    return f"{_session_prefix(rec)}_{sup['filename']}"
+
+
+def transcription_document(rec: dict) -> str | None:
+    """Transcription lisible précédée des informations de séance connues de l'app (emploi du temps, supports)."""
+    path = recorder.recording_dir(rec["id"]) / "transcript.txt"
+    if not path.exists():
+        return None
+    subject = db.get_subject(rec["subject_id"]) or {}
+    info = [
+        "Séance (informations de l'app d'enregistrement) :",
+        f"- Matière : {subject.get('name', '')}",
+        f"- Séance : {rec['course_type']} {rec['session_number']} (numérotation de l'app)",
+        f"- Date : {fr_date(rec['session_date'])}",
+    ]
+    if rec.get("event_start") and rec.get("event_end"):
+        info.append(f"- Horaire : {fmt_time(rec['event_start'])} – {fmt_time(rec['event_end'])}")
+    if rec.get("location"):
+        info.append(f"- Salle : {rec['location']}")
+    info.append(f"- Enseignant : {rec.get('teacher') or subject.get('teachers') or 'non renseigné'}")
+    if rec.get("event_summary"):
+        info.append(f"- Intitulé dans l'emploi du temps : {rec['event_summary']}")
+    info.append(f"- Durée de l'enregistrement : {fmt_duration(rec.get('duration_seconds') or rec.get('elapsed_seconds'))}")
+    sups = db.list_supports(rec["id"])
+    if sups:
+        info.append(f"- Support(s) de cours, dossier « {SUPPORTS_FOLDER} » : "
+                    + ", ".join(support_filename(rec, s) for s in sups))
+    text = path.read_text(encoding="utf-8")
+    title, sep, rest = text.partition("\n")
+    if title.startswith("# "):
+        return f"{title}\n\n" + "\n".join(info) + f"\n{sep}{rest}"
+    return "\n".join(info) + "\n\n" + text
+
+
+def deposit_inputs(recording_id: int, client: DriveClient | None = None) -> dict:
+    """Dépose la transcription et les supports de la séance dans `Transcriptions/` et `Supports/`.
+
+    La transcription est remplacée à chaque dépôt (même fichier) ; un support déjà déposé n'est pas renvoyé.
+    """
+    rec = db.get_recording(recording_id)
+    document = transcription_document(rec)
+    sups = [s for s in db.list_supports(recording_id) if s["stored_name"] and supports.file_path(s).exists()]
+    if document is None and not sups:
+        return {}
+    client = client or DriveClient()
+    subject = _subject_folders(client, db.get_subject(rec["subject_id"]))
+    fields: dict = {}
+    if document is not None:
+        folder = client.ensure_folder(TRANSCRIPTIONS_FOLDER, subject["drive_folder_id"],
+                                      subject.get("drive_transcriptions_folder_id"))
+        db.update_subject(subject["id"], drive_transcriptions_folder_id=folder["id"],
+                          drive_transcriptions_folder_url=folder.get("webViewLink"))
+        f = client.upsert_text(transcription_filename(rec), folder["id"], document, rec.get("drive_transcription_id"),
+                               mimetype="text/plain")
+        fields.update(drive_transcription_id=f["id"], drive_transcription_url=f.get("webViewLink"))
+        db.update_recording(recording_id, **fields)
+    pending = [s for s in sups if not client.get(s.get("drive_id"))]
+    if pending:
+        folder = client.ensure_folder(SUPPORTS_FOLDER, subject["drive_folder_id"], subject.get("drive_supports_folder_id"))
+        db.update_subject(subject["id"], drive_supports_folder_id=folder["id"],
+                          drive_supports_folder_url=folder.get("webViewLink"))
+        for sup in pending:
+            path = supports.file_path(sup)
+            f = client.upsert_file(support_filename(rec, sup), folder["id"], path,
+                                   supports.MIMETYPES.get(path.suffix.lower(), "application/octet-stream"), None)
+            db.update_support(sup["id"], drive_id=f["id"], drive_url=f.get("webViewLink"))
+    return fields
+
+
+def _deposit_safely(recording_id: int) -> None:
+    try:
+        deposit_inputs(recording_id)
+        db.log(recording_id, "Support(s) de cours déposé(s) dans Drive (dossier Supports).")
+    except Exception as exc:  # noqa: BLE001 - nouvel essai à la prochaine publication
+        db.log(recording_id, f"Dépôt des supports dans Drive impossible pour l'instant : {exc}", "warning")
+
+
+def deposit_in_background(recording_id: int) -> None:
+    """Mode automatisation : support ajouté après le dépôt de la transcription → envoyé tout de suite."""
+    rec = db.get_recording(recording_id)
+    if automation_mode() and is_configured() and rec and rec.get("drive_transcription_id"):
+        threading.Thread(target=_deposit_safely, args=(recording_id,), name=f"depot-{recording_id}", daemon=True).start()
+
+
 def publish_subject(subject_id: int, client: DriveClient | None = None, recording_id: int | None = None) -> dict:
     """Régénère et envoie le cours complet, `_etat.md` et le Google Doc NotebookLM de la matière."""
+    if automation_mode():
+        raise PublishSkipped("Mode automatisation : le cours complet, _etat.md et le Google Doc NotebookLM "
+                             "sont rédigés par l'automatisation.")
     client = client or DriveClient()
     subject = _subject_folders(client, db.get_subject(subject_id))
     full_md = subjects.build_full_course(subject)
@@ -425,6 +535,14 @@ def publish_subject(subject_id: int, client: DriveClient | None = None, recordin
 
 
 def publish_recording(recording_id: int, client: DriveClient | None = None) -> None:
+    if automation_mode():  # séances, cours complet, _etat.md et Google Doc : rédigés par l'automatisation
+        rec = db.get_recording(recording_id)
+        if rec.get("drive_md_id") and not rec.get("drive_transcription_id"):
+            raise PublishSkipped("Séance déjà rédigée dans Drive par l'app avant le mode automatisation : sa "
+                                 "transcription n'est pas déposée (l'automatisation la rédigerait une seconde fois).")
+        if not deposit_inputs(recording_id, client):
+            raise RuntimeError("Aucune transcription à déposer dans Drive.")
+        return
     rec = db.get_recording(recording_id)
     course = subjects.read_course(recording_id)
     if course is None:

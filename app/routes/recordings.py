@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from .. import config, db, recorder, subjects, supports
 from ..markdown_utils import replace_title
 from ..pipeline import BUSY_STATUSES, STEP_LABELS, pipeline
+from ..publish import drive
 from ..textutils import fmt_duration, parse_date
 from ..web import redirect, render
 
@@ -98,7 +99,8 @@ def status_context(rec: dict) -> dict:
         "steps": progress_steps(rec, files),
         "retry": retry_action(rec),
         "targets": [
-            {"name": "Drive", "status": rec["drive_status"], "url": rec.get("drive_md_url"), "error": rec.get("drive_error")},
+            {"name": "Drive", "status": rec["drive_status"], "url": rec.get("drive_md_url") or rec.get("drive_transcription_url"),
+             "error": rec.get("drive_error")},
             {"name": "Notion", "status": rec["notion_status"], "url": rec.get("notion_page_url"), "error": rec.get("notion_error")},
         ],
     }
@@ -159,6 +161,7 @@ async def add_supports(rid: int, files: list[UploadFile] = File(...)):
     target = f"/enregistrements/{rid}#supports"
     if not added:
         return redirect(target, " ".join(errors) or "Aucun fichier reçu.", "err")
+    drive.deposit_in_background(rid)
     message = ("Support ajouté" if len(added) == 1 else f"{len(added)} supports ajoutés") + " : lecture en cours."
     return redirect(target, " ".join([message, *errors]), "warn" if errors else "ok")
 

@@ -102,7 +102,19 @@ Cours M1/
       2026-09-29_CM03_<titre-court>.md
       2026-09-29_CM03_<titre-court>_annote.md   # après import des annotations Notion
     Sources/                           # option : audio + transcription
+    Transcriptions/                    # mode automatisation : 2026-09-29_CM03_transcription.txt
+    Supports/                          # mode automatisation : 2026-09-29_CM03_<support>.pdf
 ```
+
+### Rédaction par une automatisation externe (mode « automatisation »)
+
+Pour confier la rédaction des cours à une automatisation qui lit Drive (par exemple une tâche planifiée d'un assistant IA ayant accès à Drive), choisissez dans **Paramètres → Google Drive → Options** : « Qui rédige les cours dans Drive ? » → **Une automatisation externe**.
+
+- Dès qu'une transcription est prête, l'app la dépose dans `<Matière>/Transcriptions/` (`AAAA-MM-JJ_CM03_transcription.txt`), sans attendre sa propre mise en forme. Le fichier commence par les informations de séance connues de l'app : matière, type et numéro, date, horaire, salle, enseignant, intitulé de l'emploi du temps, durée, supports joints.
+- Les supports de cours joints à la séance sont déposés dans `<Matière>/Supports/` (`AAAA-MM-JJ_CM03_<nom du fichier>`), y compris ceux ajoutés après coup.
+- L'app **n'écrit plus** les fiches de `Séances/`, le cours complet, `_etat.md` ni le Google Doc NotebookLM : c'est l'automatisation qui les tient à jour (sinon chacun écraserait le travail de l'autre). La mise en forme locale et la publication Notion continuent comme avant.
+- Seules les séances transcrites **après** le passage en mode automatisation sont déposées : celles déjà publiées par l'app ne sont pas rédigées une seconde fois. Les fichiers déjà présents dans Drive restent en place et l'automatisation peut les compléter.
+- L'app ne supprime jamais rien dans Drive (retirer un support dans l'app ne le retire pas de `Supports/`).
 
 ### NotebookLM
 

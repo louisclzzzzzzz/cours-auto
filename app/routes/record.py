@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from .. import calendar_ics, db, recorder, subjects, supports
 from ..pipeline import BUSY_STATUSES, STEP_LABELS, pipeline
+from ..publish import drive
 from ..textutils import parse_date
 from ..web import consent_reminder_visible, redirect, render
 
@@ -276,6 +277,7 @@ async def api_add_supports(rid: int, files: list[UploadFile] = File(...)):
     added, errors = await run_in_threadpool(supports.add_many, rid, [(f.filename, f.file) for f in files])
     if errors and not added:
         raise HTTPException(400, " ".join(errors))
+    drive.deposit_in_background(rid)
     return {"supports": [{"id": x["id"], "filename": x["filename"]} for x in added], "errors": errors}
 
 

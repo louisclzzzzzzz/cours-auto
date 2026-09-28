@@ -23,6 +23,11 @@ from .textutils import slugify
 log = logging.getLogger(__name__)
 
 FORMATS = {".pdf": "PDF", ".pptx": "PowerPoint", ".docx": "Word"}
+MIMETYPES = {
+    ".pdf": "application/pdf",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
 ACCEPT = ".pdf,.pptx,.docx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation," \
          "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 OFFICE = {".pptx", ".docx"}  # convertis (pas « vus ») par l'OCR : ponctuation échappée façon Markdown
