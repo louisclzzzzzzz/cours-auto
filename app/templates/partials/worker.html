@@ -1,8 +1,6 @@
 {% if current %}
-  <span class="spinner"></span>
-  {% if current.get('recording_id') %}<a href="/enregistrements/{{ current.recording_id }}">Traitement #{{ current.recording_id }}</a>{% else %}Traitement{% endif %}
-  <span class="small">— {{ detail }}</span>
-  {% if queued %}<span class="small"> (+{{ queued }} en attente)</span>{% endif %}
-{% else %}
-  <span class="small">Aucun traitement en cours</span>
+<a href="{{ '/enregistrements/%d' % rec.id if rec else '/enregistrements' }}" title="{{ detail }}">
+  <span class="spinner" aria-hidden="true"></span>
+  <span class="ellipsis">{% if rec %}{{ rec.subject_name }} · {{ rec.course_type }} {{ rec.session_number }} : {% endif %}{{ step }}{% if queued %} (+{{ queued }} en attente){% endif %}</span>
+</a>
 {% endif %}

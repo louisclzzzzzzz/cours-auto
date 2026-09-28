@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 MOIS = [
@@ -83,6 +83,27 @@ def fmt_time(value: str | datetime | None) -> str:
         except ValueError:
             return value
     return value.strftime("%H:%M")
+
+
+def fmt_when(value: str | datetime | None) -> str:
+    """Horodatage ISO → « aujourd'hui à 20:18 », « hier à 08:05 », « le 27/09/2026 à 14:00 »."""
+    if not value:
+        return ""
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return value
+    if value.tzinfo:
+        value = value.astimezone()  # heure locale
+    now = datetime.now(value.tzinfo)
+    if value.date() == now.date():
+        day = "aujourd'hui"
+    elif value.date() == now.date() - timedelta(days=1):
+        day = "hier"
+    else:
+        day = f"le {value.strftime('%d/%m/%Y')}"
+    return f"{day} à {value.strftime('%H:%M')}"
 
 
 def normalize_spaces(text: str) -> str:

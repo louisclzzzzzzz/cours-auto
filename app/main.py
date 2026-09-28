@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
 from urllib.parse import urlparse
 
 import uvicorn
@@ -15,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from . import calendar_ics, config, db
 from .pipeline import pipeline
 from .routes import courses, record, recordings, settings, subjects
+from .web import STATIC_DIR
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s : %(message)s")
 
@@ -48,7 +48,7 @@ async def local_only(request: Request, call_next):
     return await call_next(request)
 
 
-app.mount("/static", StaticFiles(directory=str(Path(__file__).resolve().parent / "static")), name="static")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 for module in (record, recordings, courses, subjects, settings):
     app.include_router(module.router)
 

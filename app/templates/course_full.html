@@ -2,11 +2,16 @@
 {% from "macros.html" import markdown %}
 {% block title %}{{ subject.name }} – Cours complet{% endblock %}
 {% block content %}
-<p class="muted small"><a href="/cours/{{ subject.id }}">← {{ subject.name }}</a></p>
-<div class="links card">
-  {% if subject.drive_full_url %}<a href="{{ subject.drive_full_url }}" target="_blank" rel="noopener">Cours complet sur Drive</a>{% endif %}
-  {% if subject.drive_gdoc_url %}<a href="{{ subject.drive_gdoc_url }}" target="_blank" rel="noopener">Google Doc NotebookLM</a>{% endif %}
-  <span class="muted small">Aperçu local, régénéré à partir des séances enregistrées sur le disque.</span>
+<div class="page-head">
+  <div>
+    <p class="crumb"><a href="/cours/{{ subject.id }}">← {{ subject.name }}</a></p>
+    <h1>Cours complet</h1>
+    <p class="muted">Toutes les séances à la suite (versions annotées si vous les avez importées).</p>
+  </div>
+  <div class="actions">
+    {% if subject.drive_gdoc_url %}<a class="btn ext" href="{{ subject.drive_gdoc_url }}" target="_blank" rel="noopener">Google Doc NotebookLM</a>{% endif %}
+    {% if subject.drive_full_url %}<a class="btn ext" href="{{ subject.drive_full_url }}" target="_blank" rel="noopener">Sur Drive</a>{% endif %}
+  </div>
 </div>
 <section class="card">{{ markdown(md) }}</section>
 {% endblock %}

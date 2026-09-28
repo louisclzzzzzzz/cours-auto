@@ -188,8 +188,9 @@ def suggest_subject_name(summary: str) -> str:
     text = summary or ""
     for rx in _NOISE_RE:
         text = rx.sub(" ", text)
-    text = re.sub(r"\s*[-–—:/|_]+\s*$", "", normalize_spaces(text))
-    text = re.sub(r"^\s*[-–—:/|_]+\s*", "", text)
+    text = re.sub(r"\(\s*[-–—:/|_,;&+*\s]*\)", " ", text)  # « (CM/TD/TP) » vidé par le nettoyage
+    text = re.sub(r"[\s\-–—:/|_*]+$", "", normalize_spaces(text))
+    text = re.sub(r"^[\s\-–—:/|_*]+", "", text)
     return normalize_spaces(text) or normalize_spaces(summary)
 
 
@@ -281,6 +282,19 @@ def pick_current(slots: list[Slot], now: datetime) -> Slot | None:
             return s
     upcoming = [s for s in slots if now < s.start <= now + timedelta(minutes=30)]
     return upcoming[0] if upcoming else None
+
+
+def unmapped_summaries(days_back: int = 14, days_ahead: int = 60) -> list[dict]:
+    """Intitulés récents ou à venir qui ne correspondent à aucune matière (avec nombre de créneaux)."""
+    today = now_local().date()
+    seen: dict[str, dict] = {}
+    for s in slots_between(today - timedelta(days=days_back), today + timedelta(days=days_ahead)):
+        if s.subject_id is not None:
+            continue
+        entry = seen.setdefault(s.summary, {"summary": s.summary, "suggested": s.suggested_name, "teacher": s.teacher,
+                                            "type": s.course_type, "count": 0})
+        entry["count"] += 1
+    return sorted(seen.values(), key=lambda x: x["summary"].casefold())
 
 
 def find_slot(key: str, around: date) -> Slot | None:

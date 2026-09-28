@@ -8,13 +8,20 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from .. import config, db, recorder, subjects
 from ..markdown_utils import replace_title
 from ..pipeline import BUSY_STATUSES, STEP_LABELS, pipeline
-from ..textutils import parse_date
+from ..textutils import fmt_duration, parse_date
 from ..web import redirect, render
 
 router = APIRouter()
 
 CHAINED = {"finalize", "transcribe", "format", "publish"}
 ACTIONS = {"finalize", "transcribe", "format", "state", "publish", "publish_drive", "publish_notion", "import_annotations"}
+
+# Avancement affiché en 4 étapes (la mise à jour de l'état de matière est rattachée à « Mise en forme »).
+STEPS = ["Audio", "Transcription", "Mise en forme", "Publication"]
+RUNNING_STEP = {"recording": 0, "finalizing": 0, "transcribing": 1, "formatting": 2, "publishing": 3}
+FAILED_STEP = {"finalisation audio": 0, "transcription": 1, "mise en forme": 2,
+               "publication": 3, "publication Drive": 3, "publication Notion": 3}
+RETRY_ACTION = {v: k for k, v in STEP_LABELS.items() if k != "publish"}  # libellé d'étape en échec → action
 
 
 def _get(rid: int) -> dict:
@@ -37,14 +44,73 @@ def _files(rid: int) -> dict:
     }
 
 
+def _list_context() -> dict:
+    recs = db.list_recordings()
+    polling = any(r["status"] in BUSY_STATUSES or r["status"] == "recording" or pipeline.is_active(r["id"]) for r in recs)
+    return {"recs": recs, "polling": polling}
+
+
+def progress_steps(rec: dict, files: dict) -> list[dict]:
+    status = rec["status"]
+    running = RUNNING_STEP.get(status)
+    failed = FAILED_STEP.get(rec.get("error_step") or "") if status == "error" else None
+    published = files["course"] and all(rec[f"{k}_status"] in ("done", "skipped") for k in ("drive", "notion"))
+    done = [files["audio"], files["transcript"], files["course"], published]
+    steps = []
+    for i, label in enumerate(STEPS):
+        if running is not None:
+            state = "done" if i < running else "current" if i == running else "todo"
+        elif failed is not None:
+            state = "done" if i < failed else "error" if i == failed else "todo"
+        else:
+            state = "done" if done[i] else "todo"
+        steps.append({"label": label, "state": state})
+    if status == "interrupted":
+        steps[0]["state"] = "warn"
+    if files["audio"] and rec.get("duration_seconds"):
+        steps[0]["detail"] = fmt_duration(rec["duration_seconds"])
+    return steps
+
+
+def retry_action(rec: dict) -> str | None:
+    """Action du bouton « Réessayer » : relance l'étape en échec (ou termine un enregistrement interrompu)."""
+    if rec["status"] == "interrupted":
+        return "finalize"
+    if rec["status"] != "error":
+        return None
+    step = rec.get("error_step") or ""
+    if step == "publication":
+        failed = [k for k in ("drive", "notion") if rec[f"{k}_status"] == "error"]
+        return f"publish_{failed[0]}" if len(failed) == 1 else "publish"
+    return RETRY_ACTION.get(step)
+
+
+def status_context(rec: dict) -> dict:
+    rid = rec["id"]
+    files = _files(rid)
+    current = pipeline.current if pipeline.current and pipeline.current.get("recording_id") == rid else None
+    return {
+        "rec": rec,
+        "files": files,
+        "busy": pipeline.is_active(rid) or rec["status"] in BUSY_STATUSES,
+        "running_detail": pipeline.describe() if current else "",
+        "steps": progress_steps(rec, files),
+        "retry": retry_action(rec),
+        "targets": [
+            {"name": "Drive", "status": rec["drive_status"], "url": rec.get("drive_md_url"), "error": rec.get("drive_error")},
+            {"name": "Notion", "status": rec["notion_status"], "url": rec.get("notion_page_url"), "error": rec.get("notion_error")},
+        ],
+    }
+
+
 @router.get("/enregistrements", response_class=HTMLResponse)
 def list_page(request: Request):
-    return render(request, "recordings.html", recs=db.list_recordings())
+    return render(request, "recordings.html", **_list_context())
 
 
 @router.get("/fragments/recordings", response_class=HTMLResponse)
 def list_fragment(request: Request):
-    return render(request, "partials/recordings_rows.html", recs=db.list_recordings())
+    return render(request, "partials/recordings_rows.html", **_list_context())
 
 
 @router.get("/enregistrements/{rid}", response_class=HTMLResponse)
@@ -54,23 +120,16 @@ def detail_page(request: Request, rid: int):
     transcript = (folder / "transcript.txt").read_text(encoding="utf-8") if (folder / "transcript.txt").exists() else None
     return render(
         request, "recording_detail.html",
-        rec=rec,
-        files=_files(rid),
+        **status_context(rec),
         transcript=transcript,
-        course=subjects.read_course(rid),
-        annotated=subjects.read_course(rid, prefer_annotated=True) if subjects.annotated_path(rid).exists() else None,
-        old_pages=db.loads(rec.get("notion_old_pages"), []),
         subjects_list=db.list_subjects(),
         logs=db.list_logs(rid, 60),
-        busy=pipeline.is_active(rid) or rec["status"] in BUSY_STATUSES,
     )
 
 
 @router.get("/fragments/recording/{rid}/status", response_class=HTMLResponse)
 def status_fragment(request: Request, rid: int):
-    rec = _get(rid)
-    return render(request, "partials/recording_status.html", rec=rec,
-                  busy=pipeline.is_active(rid) or rec["status"] in BUSY_STATUSES)
+    return render(request, "partials/recording_status.html", **status_context(_get(rid)))
 
 
 @router.get("/enregistrements/{rid}/audio")

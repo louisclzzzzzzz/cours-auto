@@ -1,21 +1,19 @@
 {% extends "base.html" %}
-{% block title %}Enregistrements{% endblock %}
+{% block title %}Historique{% endblock %}
 {% block content %}
-<div class="row spread">
-  <h1>Enregistrements</h1>
-  <div class="row">
-    <a class="btn" href="/#import">📁 Importer un fichier audio</a>
-    <a class="btn primary" href="/">⏺ Nouvel enregistrement</a>
+<div class="page-head">
+  <div>
+    <h1>Historique</h1>
+    <p class="muted">Tous vos enregistrements et l'avancement de leur traitement.</p>
   </div>
 </div>
-<div class="card" style="padding:0.4rem 0.6rem">
+<div class="card flush table-wrap">
   <table class="list">
+    <caption class="visually-hidden">Enregistrements, du plus récent au plus ancien</caption>
     <thead>
-      <tr><th>Date</th><th>Matière</th><th>Séance</th><th>Durée</th><th>Statut</th><th>Publication</th><th></th></tr>
+      <tr><th scope="col">Date</th><th scope="col">Cours</th><th scope="col">Durée</th><th scope="col">Statut</th></tr>
     </thead>
-    <tbody hx-get="/fragments/recordings" hx-trigger="every 5s" hx-swap="innerHTML">
-      {% include "partials/recordings_rows.html" %}
-    </tbody>
+    {% include "partials/recordings_rows.html" %}
   </table>
 </div>
 {% endblock %}

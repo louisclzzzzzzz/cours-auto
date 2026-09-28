@@ -4,26 +4,33 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Cours auto{% endblock %} · Cours auto</title>
-  <link rel="stylesheet" href="/static/app.css">
-  <link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
-  <script src="/static/vendor/htmx.min.js" defer></script>
-  <script src="/static/vendor/marked.umd.js" defer></script>
-  <script src="/static/vendor/katex/katex.min.js" defer></script>
-  <script src="/static/markdown.js" defer></script>
+  <link rel="stylesheet" href="{{ static('app.css') }}">
+  <link rel="stylesheet" href="{{ static('vendor/katex/katex.min.css') }}">
+  <script src="{{ static('vendor/htmx.min.js') }}" defer></script>
+  <script src="{{ static('vendor/marked.umd.js') }}" defer></script>
+  <script src="{{ static('vendor/katex/katex.min.js') }}" defer></script>
+  <script src="{{ static('markdown.js') }}" defer></script>
+  <script src="{{ static('app.js') }}" defer></script>
   {% block head %}{% endblock %}
 </head>
 <body>
+  <a class="skip-link" href="#main">Aller au contenu</a>
   <header class="topbar">
-    <a class="brand" href="/">🎙️ Cours auto</a>
-    <nav>
+    <a class="brand" href="/"><span aria-hidden="true">🎙️</span> Cours auto</a>
+    <nav aria-label="Navigation principale">
       {% for href, label, active in nav %}
-        <a href="{{ href }}" class="{{ 'active' if active }}">{{ label }}</a>
+        <a href="{{ href }}"{% if active %} class="active" aria-current="page"{% endif %}>{{ label }}</a>
       {% endfor %}
     </nav>
     <div class="worker" hx-get="/fragments/worker" hx-trigger="load, every 4s" hx-swap="innerHTML"></div>
   </header>
-  <main class="container">
-    {% if msg %}<div class="flash {{ level }}">{{ msg }}</div>{% endif %}
+  {% if msg %}
+  <div class="toast {{ level }}" role="{{ 'alert' if level == 'err' else 'status' }}" data-toast>
+    <span>{{ msg }}</span>
+    <button type="button" class="toast-close" data-dismiss aria-label="Fermer le message">×</button>
+  </div>
+  {% endif %}
+  <main id="main" class="container" tabindex="-1">
     {% block content %}{% endblock %}
   </main>
   {% block scripts %}{% endblock %}

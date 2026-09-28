@@ -1,14 +1,26 @@
-{% from "macros.html" import status_badge, pub_badges %}
-{% for r in recs %}
-<div class="row" style="padding:0.35rem 0; border-bottom:1px solid var(--border)">
-  <a href="/enregistrements/{{ r.id }}"><strong>{{ r.subject_name or 'Sans matière' }}</strong>
-    — {{ r.course_type }} {{ r.session_number }}{% if r.title %} · {{ r.title }}{% endif %}</a>
-  <span class="small muted">{{ r.session_date|fr_short_date }}</span>
-  <span class="right row">{{ status_badge(r) }} {{ pub_badges(r) }}</span>
+{% from "macros.html" import status_badge, session_name %}
+{# Se recharge sur l'événement « refresh-latest » (enregistreur) et toutes les 4 s tant qu'un traitement avance. #}
+<div id="latest" hx-get="/fragments/latest" hx-swap="outerHTML"
+     hx-trigger="refresh-latest from:body{{ ', every 4s' if polling }}">
+  {% if recs %}
+  <ul class="rows compact">
+    {% for r in recs %}
+    <li data-href="/enregistrements/{{ r.id }}">
+      <div class="row-main">
+        <a class="row-title" href="/enregistrements/{{ r.id }}">{{ r.subject_name or 'Sans matière' }}</a>
+        <span class="muted">· {{ session_name(r) }}</span>
+        {% if pipeline.current and pipeline.current.get('recording_id') == r.id %}
+          <div class="small muted">{{ pipeline.describe() }}</div>
+        {% endif %}
+      </div>
+      <div class="row-side">
+        <span class="small muted nowrap">{{ r.session_date|fr_short_date }}</span>
+        {{ status_badge(r) }}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">Aucun enregistrement pour l'instant.</p>
+  {% endif %}
 </div>
-{% if pipeline.current and pipeline.current.get('recording_id') == r.id %}
-  <p class="small muted" style="margin:0.2rem 0 0.4rem">⏳ {{ pipeline.describe() }}</p>
-{% endif %}
-{% else %}
-<p class="muted">Aucun enregistrement pour l'instant.</p>
-{% endfor %}

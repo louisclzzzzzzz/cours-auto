@@ -48,13 +48,13 @@ def save_calendar_settings(ics_url: str = Form(""), timezone: str = Form("Europe
     try:
         ZoneInfo(timezone.strip())
     except Exception:  # noqa: BLE001
-        return redirect("/parametres", f"Fuseau horaire inconnu : {timezone}", "err")
+        return redirect("/parametres#edt", f"Fuseau horaire inconnu : {timezone}", "err")
     db.set_setting("ics_url", ics_url.strip())
     db.set_setting("timezone", timezone.strip())
     if ics_url.strip():
         ok, message = calendar_ics.refresh_from_url()
-        return redirect("/parametres", message, "ok" if ok else "err")
-    return redirect("/parametres", "Paramètres de l'emploi du temps enregistrés.")
+        return redirect("/parametres#edt", message, "ok" if ok else "err")
+    return redirect("/parametres#edt", "Paramètres de l'emploi du temps enregistrés.")
 
 
 @router.post("/parametres/edt/fichier")
@@ -63,8 +63,8 @@ async def upload_calendar(file: UploadFile = File(...)):
     try:
         n = calendar_ics.save_calendar(data, "file")
     except Exception as exc:  # noqa: BLE001
-        return redirect("/parametres", f"Fichier .ics invalide : {exc}", "err")
-    return redirect("/parametres", f"Emploi du temps importé ({n} événements).")
+        return redirect("/parametres#edt", f"Fichier .ics invalide : {exc}", "err")
+    return redirect("/parametres#edt", f"Emploi du temps importé ({n} événements).")
 
 
 @router.post("/parametres/modeles")
@@ -78,9 +78,9 @@ def save_models(
     audio_bitrate: str = Form("48k"),
 ):
     if not re.fullmatch(r"\d{2,3}k", audio_bitrate.strip()):
-        return redirect("/parametres", "Débit audio invalide (ex. 48k).", "err")
+        return redirect("/parametres#mistral", "Débit audio invalide (ex. 48k).", "err")
     if llm_reasoning_effort not in ("", "none", "high"):
-        return redirect("/parametres", "Niveau de raisonnement invalide.", "err")
+        return redirect("/parametres#mistral", "Niveau de raisonnement invalide.", "err")
     db.set_setting("llm_model", llm_model.strip() or config.DEFAULT_SETTINGS["llm_model"])
     db.set_setting("llm_reasoning_effort", llm_reasoning_effort)
     db.set_setting("transcription_model", transcription_model.strip() or "voxtral-mini-latest")
@@ -88,7 +88,7 @@ def save_models(
     db.set_setting("llm_chunk_chars", str(max(llm_chunk_chars, 5000)))
     db.set_setting("llm_max_tokens", str(max(llm_max_tokens, 2000)))
     db.set_setting("audio_bitrate", audio_bitrate.strip())
-    return redirect("/parametres", "Paramètres Mistral enregistrés.")
+    return redirect("/parametres#mistral", "Réglages Mistral enregistrés.")
 
 
 @router.post("/parametres/mistral/test", response_class=HTMLResponse)
@@ -103,7 +103,7 @@ def save_drive(drive_root_name: str = Form("Cours M1"), drive_notebooklm: str = 
     db.set_setting("drive_root_name", drive_root_name.strip() or "Cours M1")
     db.set_setting("drive_notebooklm", "1" if drive_notebooklm else "0")
     db.set_setting("drive_upload_sources", "1" if drive_upload_sources else "0")
-    return redirect("/parametres", "Options Drive enregistrées.")
+    return redirect("/parametres#drive", "Options Drive enregistrées.")
 
 
 def _requeue_failed_drive() -> None:
@@ -136,8 +136,8 @@ def drive_connect_link():
     try:
         drive.start_browser_auth(on_success=_requeue_failed_drive)
     except Exception as exc:  # noqa: BLE001
-        return redirect("/parametres", f"Connexion impossible : {exc}", "err")
-    return redirect("/parametres")
+        return redirect("/parametres#drive", f"Connexion impossible : {exc}", "err")
+    return redirect("/parametres#drive")
 
 
 @router.post("/drive/connect/cancel", response_class=HTMLResponse)
@@ -155,21 +155,19 @@ def drive_auth_fragment(request: Request):
 @router.post("/drive/disconnect")
 def drive_disconnect():
     drive.disconnect()
-    return redirect("/parametres", "Google Drive déconnecté (token.json supprimé).")
+    return redirect("/parametres#drive", "Google Drive déconnecté (token.json supprimé).")
 
 
 @router.post("/parametres/notion")
 def save_notion(notion_root: str = Form("")):
+    """Enregistre la page racine puis vérifie tout de suite l'accès (jeton + page partagée)."""
     if notion_root.strip() and not notion.extract_id(notion_root):
-        return redirect("/parametres", "URL ou ID de page Notion non reconnu.", "err")
+        return redirect("/parametres#notion", "URL ou ID de page Notion non reconnu.", "err")
     db.set_setting("notion_root", notion_root.strip())
-    return redirect("/parametres", "Page racine Notion enregistrée.")
-
-
-@router.post("/parametres/notion/test", response_class=HTMLResponse)
-def test_notion(request: Request):
+    if not notion_root.strip():
+        return redirect("/parametres#notion", "Page racine Notion retirée.")
     ok, message = notion.test_connection()
-    return render(request, "partials/test_result.html", ok=ok, message=message, models=[])
+    return redirect("/parametres#notion", message if ok else f"Page enregistrée. {message}", "ok" if ok else "err")
 
 
 @router.post("/parametres/rappel")

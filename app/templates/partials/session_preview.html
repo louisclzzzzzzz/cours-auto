@@ -1,25 +1,27 @@
-{% from "macros.html" import markdown, session_name %}
-<div class="row spread">
-  <div>
-    <h2 style="margin-bottom:0.2rem">{{ session_name(rec) }}</h2>
-    <p class="small muted">{{ rec.session_date|fr_date }}{% if rec.teacher %} · {{ rec.teacher }}{% endif %}
-      · {{ rec.duration_seconds|duration }}</p>
+{% from "macros.html" import markdown, menu %}
+<div class="preview-toolbar">
+  {% if has_annot %}
+  <div class="segmented" role="group" aria-label="Version affichée">
+    <button type="button" aria-pressed="{{ 'true' if use_annot else 'false' }}"
+            hx-get="/fragments/cours/seance/{{ rec.id }}?version=annote" hx-target="#preview">Avec mes annotations</button>
+    <button type="button" aria-pressed="{{ 'false' if use_annot else 'true' }}"
+            hx-get="/fragments/cours/seance/{{ rec.id }}?version=original" hx-target="#preview">Version d'origine</button>
   </div>
-  <form method="post" action="/cours/seance/{{ rec.id }}/annotations" class="inline-form">
-    <button {{ 'disabled' if not rec.notion_page_id }} title="{{ '' if rec.notion_page_id else 'Pas encore publiée dans Notion' }}">📥 Importer mes annotations Notion</button>
-  </form>
+  {% endif %}
+  {% if rec.notion_page_url %}<a class="btn ext" href="{{ rec.notion_page_url }}" target="_blank" rel="noopener">Ouvrir dans Notion</a>{% endif %}
+  {% call menu() %}
+    {% if rec.notion_page_id %}
+    <form method="post" action="/cours/seance/{{ rec.id }}/annotations">
+      <button class="menu-item">Importer mes annotations Notion</button>
+    </form>
+    {% if rec.annotations_imported_at %}<p class="menu-note">Dernier import {{ rec.annotations_imported_at|when }}</p>{% endif %}
+    <hr>
+    {% endif %}
+    {% if rec.drive_md_url %}<a class="menu-item ext" href="{{ rec.drive_md_url }}" target="_blank" rel="noopener">Fichier sur Drive</a>{% endif %}
+    {% if rec.drive_annot_url %}<a class="menu-item ext" href="{{ rec.drive_annot_url }}" target="_blank" rel="noopener">Fichier annoté sur Drive</a>{% endif %}
+    {% for p in old_pages %}<a class="menu-item ext" href="{{ p.url }}" target="_blank" rel="noopener">Ancienne page Notion (v{{ p.version }})</a>{% endfor %}
+    <a class="menu-item" href="/enregistrements/{{ rec.id }}/cours.md{{ '?annote=1' if use_annot }}" download>Télécharger le Markdown</a>
+    <a class="menu-item" href="/enregistrements/{{ rec.id }}">Audio, transcription et traitement</a>
+  {% endcall %}
 </div>
-<div class="links" style="margin:0.4rem 0 0.8rem">
-  {% if rec.notion_page_url %}<a href="{{ rec.notion_page_url }}" target="_blank" rel="noopener">Ouvrir dans Notion</a>{% endif %}
-  {% if rec.drive_md_url %}<a href="{{ rec.drive_md_url }}" target="_blank" rel="noopener">Fichier Drive</a>{% endif %}
-  {% if rec.drive_annot_url %}<a href="{{ rec.drive_annot_url }}" target="_blank" rel="noopener">Fichier annoté (Drive)</a>{% endif %}
-  {% for p in old_pages %}<a href="{{ p.url }}" target="_blank" rel="noopener">Notion v{{ p.version }}</a>{% endfor %}
-  <a class="internal" href="/enregistrements/{{ rec.id }}">Enregistrement</a>
-</div>
-{% if has_annot %}
-<div class="tabs">
-  <button class="{{ 'active' if use_annot }}" hx-get="/fragments/cours/seance/{{ rec.id }}?version=annote" hx-target="#preview">Version annotée</button>
-  <button class="{{ 'active' if not use_annot }}" hx-get="/fragments/cours/seance/{{ rec.id }}?version=original" hx-target="#preview">Version générée d'origine</button>
-</div>
-{% endif %}
 {{ markdown(md) }}

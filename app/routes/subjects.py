@@ -1,15 +1,15 @@
-"""Page « Matières » : liste, correspondances ADE, vocabulaire, état de matière, termes proposés."""
+"""Réglages d'une matière : termes proposés, vocabulaire, intitulés ADE, état de matière.
+
+La liste des matières fait partie de la page « Cours »."""
 
 from __future__ import annotations
 
 import re
-from datetime import timedelta
 
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from .. import calendar_ics, db, subjects
-from ..transcribe import normalize_bias_terms
 from ..web import redirect, render
 
 router = APIRouter()
@@ -22,30 +22,9 @@ def _subject_or_404(sid: int) -> dict:
     return subject
 
 
-def unmapped_summaries(days_back: int = 14, days_ahead: int = 60) -> list[dict]:
-    today = calendar_ics.now_local().date()
-    seen: dict[str, dict] = {}
-    for s in calendar_ics.slots_between(today - timedelta(days=days_back), today + timedelta(days=days_ahead)):
-        if s.subject_id is None and s.summary not in seen:
-            seen[s.summary] = {"summary": s.summary, "suggested": s.suggested_name, "teacher": s.teacher,
-                               "type": s.course_type, "count": 0}
-        if s.subject_id is None:
-            seen[s.summary]["count"] += 1
-    return sorted(seen.values(), key=lambda x: x["summary"].casefold())
-
-
-@router.get("/matieres", response_class=HTMLResponse)
-def subjects_page(request: Request):
-    rows = []
-    for s in db.list_subjects():
-        rows.append({
-            **s,
-            "counts": db.session_counts(s["id"]),
-            "n_mappings": len(db.list_mappings(s["id"])),
-            "n_vocab": len(subjects.get_vocabulary(s)),
-            "n_proposed": len(subjects.get_proposed_terms(s)),
-        })
-    return render(request, "subjects.html", rows=rows, unmapped=unmapped_summaries(), subjects_list=db.list_subjects())
+@router.get("/matieres")
+def subjects_page():
+    return redirect("/cours")  # la liste des matières fait partie de la page « Cours »
 
 
 @router.post("/matieres")
@@ -53,8 +32,8 @@ def create(name: str = Form(...), teachers: str = Form("")):
     try:
         sid = subjects.create_subject(name, teachers)
     except ValueError as exc:
-        return redirect("/matieres", str(exc), "err")
-    return redirect(f"/matieres/{sid}", "Matière créée.")
+        return redirect("/cours", str(exc), "err")
+    return redirect(f"/matieres/{sid}", "Matière créée : ajoutez son vocabulaire ou ses intitulés d'emploi du temps.")
 
 
 @router.post("/matieres/associer")
@@ -64,8 +43,8 @@ def map_summary(summary: str = Form(...), subject_id: str = Form(...), new_name:
             if subject_id == "new" else int(subject_id)
         db.add_mapping(summary, False, sid)
     except (ValueError, TypeError) as exc:
-        return redirect("/matieres", f"Association impossible : {exc}", "err")
-    return redirect("/matieres", f"« {summary} » associé à « {db.get_subject(sid)['name']} ».")
+        return redirect("/cours#intitules", f"Association impossible : {exc}", "err")
+    return redirect("/cours#intitules", f"« {summary} » associé à « {db.get_subject(sid)['name']} ».")
 
 
 @router.get("/matieres/{sid}", response_class=HTMLResponse)
@@ -77,7 +56,6 @@ def subject_page(request: Request, sid: int):
         subject=subject,
         mappings=db.list_mappings(sid),
         vocab=vocab,
-        bias_preview=normalize_bias_terms(vocab),
         proposed=subjects.get_proposed_terms(subject),
         state=subjects.read_state(subject),
         counts=db.session_counts(sid),
@@ -103,7 +81,7 @@ def delete(sid: int):
     if db.list_recordings(sid):
         return redirect(f"/matieres/{sid}", "Cette matière a des enregistrements : supprimez-les ou réaffectez-les d'abord.", "err")
     db.delete_subject(sid)
-    return redirect("/matieres", "Matière supprimée.")
+    return redirect("/cours", "Matière supprimée.")
 
 
 @router.post("/matieres/{sid}/mappings")
@@ -142,16 +120,15 @@ def resolve_proposals(request: Request, sid: int, accepted: list[str] = Form(def
                       decision: str = Form("accept")):
     subject = _subject_or_404(sid)
     proposed = subjects.get_proposed_terms(subject)
-    if decision == "accept":
-        added, warning = subjects.resolve_proposed_terms(sid, accepted, [])
-        msg = warning or f"{len(added)} terme(s) ajouté(s) au vocabulaire."
-    elif decision == "reject_all":
+    if decision == "reject_all":
         subjects.resolve_proposed_terms(sid, [], proposed)
-        msg = "Propositions ignorées."
-    else:
-        subjects.resolve_proposed_terms(sid, [], accepted)
-        msg = f"{len(accepted)} proposition(s) ignorée(s)."
-    return redirect(f"/matieres/{sid}", msg)
+        return redirect(f"/matieres/{sid}#vocabulaire", "Propositions ignorées.")
+    # « Valider » : les termes cochés rejoignent le vocabulaire, les autres sont écartés.
+    checked = {t.casefold() for t in accepted}
+    rejected = [t for t in proposed if t.casefold() not in checked]
+    added, warning = subjects.resolve_proposed_terms(sid, accepted, rejected)
+    msg = warning or f"{len(added)} terme(s) ajouté(s) au vocabulaire" + (f", {len(rejected)} écarté(s)." if rejected else ".")
+    return redirect(f"/matieres/{sid}#vocabulaire", msg)
 
 
 @router.post("/matieres/{sid}/etat")

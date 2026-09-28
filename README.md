@@ -42,7 +42,7 @@ Ouvrez <http://127.0.0.1:8000>. (Autre port : `PORT=8001 uv run cours-auto`.)
 ## 3. Mistral
 
 1. Créez une clé sur <https://console.mistral.ai/api-keys> et mettez-la dans `MISTRAL_API_KEY`.
-2. Dans **Paramètres → Mistral**, « Tester la clé ». Modèles par défaut : **Mistral Small 4** `mistral-small-2603` (mise en forme, contexte 256 k tokens ; alias `mistral-small-latest`) et `voxtral-mini-latest` (transcription, jusqu'à ~3 h par requête). Le modèle se change dans Paramètres (ex. `mistral-large-latest`). Small 4 « raisonne » avant de rédiger : l'app envoie `reasoning_effort=high` par défaut (le seul autre choix accepté par Small 4 est `none`, réponse directe). La réflexion rend chaque appel plus lent et consomme des tokens en plus (une marge de 16 000 tokens lui est réservée) ; réglable dans les réglages avancés.
+2. Dans **Paramètres → Mistral**, « Tester la clé ». Modèles par défaut : **Mistral Small 4** `mistral-small-2603` (mise en forme, contexte 256 k tokens ; alias `mistral-small-latest`) et `voxtral-mini-latest` (transcription, jusqu'à ~3 h par requête). Le modèle se change dans Paramètres (ex. `mistral-large-latest`). Small 4 « raisonne » avant de rédiger : l'app envoie `reasoning_effort=high` par défaut (le seul autre choix accepté par Small 4 est `none`, réponse directe). La réflexion rend chaque appel plus lent et consomme des tokens en plus (une marge de 16 000 tokens lui est réservée) ; réglable dans **Paramètres → Mistral → Modèles et réglages avancés**.
 
 Coût indicatif : ~0,003 $/min de transcription (≈ 0,36 $ pour 2 h), LLM négligeable.
 
@@ -50,12 +50,12 @@ Coût indicatif : ~0,003 $/min de transcription (≈ 0,36 $ pour 2 h), LLM négl
 
 Dans **Paramètres → Emploi du temps** :
 
-- collez l'**URL d'export ICS** d'ADE (dans ADE : icône d'export de l'agenda → « Générer l'URL ») puis « Enregistrer et rafraîchir » ;
-- ou importez un fichier `.ics`.
+- collez le **lien d'export ICS** d'ADE (dans ADE : icône d'export de l'agenda → « Générer l'URL ») puis « Enregistrer et actualiser » ;
+- ou « Importer un fichier .ics » (envoyé dès qu'il est choisi).
 
-L'EDT est rafraîchi à l'ouverture de l'app (et au plus toutes les 30 min quand vous revenez sur l'accueil) ou via le bouton **⟳ EDT**. Le dernier EDT connu est gardé en cache : l'app fonctionne hors ligne.
+L'EDT est rafraîchi à l'ouverture de l'app (et au plus toutes les 30 min quand vous revenez sur l'accueil) ou via le lien **Actualiser** sous la liste des cours de la page Enregistrer. Le dernier EDT connu est gardé en cache : l'app fonctionne hors ligne.
 
-**Correspondance ADE → matière** : les intitulés ADE étant souvent bruités (« Algo. Av. - TD G1 »), chaque intitulé est rattaché à une matière par une règle (intitulé exact, ou expression régulière). Un créneau non reconnu affiche un petit formulaire « Créer la matière / Associer à… » ; la page **Matières** liste aussi tous les intitulés non associés des semaines à venir.
+**Correspondance ADE → matière** : les intitulés ADE étant souvent bruités (« Algo. Av. - TD G1 »), chaque intitulé est rattaché à une matière par une règle (intitulé exact, ou expression régulière). Un créneau non reconnu est marqué « Matière à associer » : une fois sélectionné, un petit formulaire permet de créer la matière ou de l'associer à une matière existante. La page **Cours** regroupe aussi, dans une section repliable, tous les intitulés non associés des semaines à venir ; les règles par expression régulière se gèrent dans les **réglages de la matière**.
 
 Le type (CM/TD/TP) est déduit de l'intitulé et reste modifiable au moment de l'enregistrement ; l'enseignant est lu dans la description ADE quand il y figure.
 
@@ -63,7 +63,7 @@ Le type (CM/TD/TP) est déduit de l'intitulé et reste modifiable au moment de l
 
 1. Créez une **intégration interne** : <https://www.notion.so/profile/integrations> → « Nouvelle intégration » (type *Interne*), capacités **Lire**, **Mettre à jour** et **Insérer du contenu**. Copiez le jeton dans `NOTION_TOKEN`.
 2. Créez une page **« Cours M1 »** et **partagez-la avec l'intégration** : menu `•••` de la page → *Connexions* → ajoutez votre intégration.
-3. Collez l'URL de la page dans **Paramètres → Notion** (ou dans `NOTION_URL`), puis « Tester la connexion ».
+3. Collez l'URL de la page dans **Paramètres → Notion** (ou dans `NOTION_URL`), puis « Enregistrer et vérifier » (l'accès à la page est testé aussitôt).
 
 À la première publication, l'app crée sous cette page :
 
@@ -110,17 +110,17 @@ Ajoutez **une seule fois** le Google Doc « <Matière> – NotebookLM » comme s
 
 ## 7. Utilisation au quotidien
 
-1. **Enregistrer** : le créneau en cours est présélectionné (sinon choisissez-en un, naviguez vers un autre jour, ou « Hors emploi du temps »). Choisissez le micro, vérifiez le vumètre, puis **Démarrer**. Pause / Reprendre / Arrêter.
-   **Importer un fichier audio** (même page, sous les boutons) : pour un cours enregistré avec un autre appareil (mp3, m4a, wav, ogg, webm, flac, vidéo mp4…). Sélectionnez d'abord le cours (créneau ou hors EDT), choisissez le fichier puis « Importer et traiter » : le fichier d'origine est conservé (`source.<ext>`), converti en MP3 mono 16 kHz puis traité comme un enregistrement. Voxtral accepte jusqu'à ~3 h par fichier.
-2. À l'arrêt, le traitement démarre en arrière-plan (un à la fois) : `finalisation audio → transcription → mise en forme → publication`. Le statut se met à jour en direct sur l'accueil et dans **Enregistrements**.
-3. **Enregistrements** : écoute, transcription, relance d'une étape (chaque étape repart des fichiers conservés), publication Drive ou Notion séparément, correction des informations (matière, type, numéro…), suppression.
-4. **Cours** : lecture des séances (Markdown + formules), liens « Ouvrir dans Notion », fichier Drive, cours complet, Google Doc NotebookLM, import des annotations.
-5. **Matières** : correspondances ADE, **vocabulaire** (≤ 100 termes envoyés à Voxtral), **termes proposés** après chaque cours (à valider), **état de la matière** (éditable).
+1. **Enregistrer** (accueil) : ① choisissez le cours — le créneau en cours est présélectionné ; sinon cliquez sur un créneau, changez de jour (‹ ›, ou « Voir le prochain jour de cours » les jours sans cours) ou prenez « Autre cours » (hors emploi du temps) — puis ② **Démarrer**. Seuls les boutons utiles s'affichent ensuite (Pause / Reprendre / Arrêter) et le choix du cours est verrouillé pendant l'enregistrement. Le micro se choisit et se teste (« Tester », vumètre) sous le bouton.
+   **Importer un fichier audio…** (même carte) : pour un cours enregistré avec un autre appareil (mp3, m4a, wav, ogg, webm, flac, vidéo mp4…). Choisissez d'abord le cours, cliquez « Importer un fichier audio… » puis sélectionnez le fichier ; une confirmation rappelle le cours choisi. Le fichier d'origine est conservé (`source.<ext>`), converti en MP3 mono 16 kHz puis traité comme un enregistrement. Voxtral accepte jusqu'à ~3 h par fichier.
+2. À l'arrêt, le traitement démarre en arrière-plan (un à la fois) : `finalisation audio → transcription → mise en forme → publication`. Le statut se met à jour en direct sur l'accueil (« Derniers traitements »), dans la barre du haut et dans **Historique**.
+3. **Historique** : la liste de tous les enregistrements ; un clic ouvre l'avancement en 4 étapes (audio → transcription → mise en forme → publication), avec un bouton **Réessayer** qui relance l'étape en échec, l'écoute et la transcription. Sections repliables : corriger les informations (matière, type, numéro…), relancer une étape précise (chaque étape repart des fichiers conservés), supprimer, journal technique.
+4. **Cours** : la liste des matières ; un clic ouvre les séances avec l'aperçu du cours (Markdown + formules), « Ouvrir dans Notion » et, dans le menu **⋯**, l'import des annotations Notion, les fichiers Drive, le téléchargement du Markdown. Au niveau de la matière : « Cours complet », et dans **⋯** le Google Doc NotebookLM, le dossier Drive, l'import des annotations de toutes les séances.
+5. **Cours → Réglages** (une matière) : **termes proposés** après chaque cours (cochez ceux à garder puis « Valider » ; les autres sont écartés), **vocabulaire** (≤ 100 termes envoyés à Voxtral), nom et enseignants, intitulés ADE associés (exact ou expression régulière), **mémoire de la matière** (état, éditable), suppression.
 
 ### Robustesse de l'enregistrement
 
 - Chaque morceau de 30 s est écrit immédiatement sur le disque (`data/recordings/<id>/chunk_XXXX.webm`).
-- Fermeture d'onglet, rechargement, veille, redémarrage de l'app : les morceaux reçus sont conservés. L'accueil affiche alors l'enregistrement comme **actif/interrompu** avec **« Reprendre l'enregistrement »** (nouveau segment, assemblé automatiquement) ou **« Finaliser tel quel »**. Au pire, les ~30 dernières secondes pas encore envoyées sont perdues.
+- Fermeture d'onglet, rechargement, veille, redémarrage de l'app : les morceaux reçus sont conservés. L'accueil affiche alors l'enregistrement comme **actif/interrompu** avec **« Reprendre »** (nouveau segment, assemblé automatiquement) ou **« Terminer et traiter »**. Au pire, les ~30 dernières secondes pas encore envoyées sont perdues.
 - Micro débranché : l'enregistrement reprend automatiquement sur le micro par défaut.
 - L'écran est maintenu allumé (Wake Lock) et le navigateur demande confirmation avant de quitter la page.
 - 🤝 Pensez à obtenir l'accord de l'enseignant avant d'enregistrer.
@@ -133,7 +133,7 @@ Les prompts sont des fichiers texte modifiables :
 - `prompts/update_state.md` — mise à jour de l'état de matière (appel n°2, < ~3 000 tokens) ;
 - `prompts/suggest_vocabulary.md` et `prompts/key_points.md`.
 
-Chaque séance reçoit l'**état de la matière** (plan cumulé, notions, notations, où en est le cours) plutôt que tout l'historique. L'état « avant séance » est figé dans le dossier de l'enregistrement, ce qui rend l'étape rejouable ; une séance ancienne relancée n'écrase pas l'état produit par une séance plus récente. Les transcriptions très longues sont découpées sur les pauses (Paramètres → réglages avancés).
+Chaque séance reçoit l'**état de la matière** (plan cumulé, notions, notations, où en est le cours) plutôt que tout l'historique. L'état « avant séance » est figé dans le dossier de l'enregistrement, ce qui rend l'étape rejouable ; une séance ancienne relancée n'écrase pas l'état produit par une séance plus récente. Les transcriptions très longues sont découpées sur les pauses (Paramètres → Mistral → Modèles et réglages avancés).
 
 ## 9. Données locales
 
@@ -159,15 +159,15 @@ data/
 
 | Problème | Solution |
 |---|---|
-| « ffmpeg introuvable » | Installez ffmpeg (§1) puis « Refaire l'assemblage audio ». |
-| Micro refusé / non listé | Autorisez le micro pour `127.0.0.1` dans le navigateur, puis « 🎚 Tester ». |
+| « ffmpeg introuvable » | Installez ffmpeg (§1) puis « Réessayer » sur l'enregistrement (Historique). |
+| Micro refusé / non listé | Autorisez le micro pour `127.0.0.1` dans le navigateur, puis « Tester » (sous le bouton Démarrer). |
 | Drive : « Autorisation expirée » chaque semaine | Publiez l’app OAuth en **Production** (§6, étape 4), puis reconnectez-vous. |
 | Drive : « Accès bloqué » / accès refusé par Google | L’app OAuth est en mode « Test » sans votre adresse : publiez-la en Production ou ajoutez-vous aux utilisateurs test (Audience). |
 | Drive : « Ce navigateur ou cette application ne sont peut-être pas sécurisés » | Faites la connexion dans Chrome ou Safari (lien « Ouvrir la connexion Google » dans Paramètres). |
 | Drive : « L’API Google Drive n’est pas activée » | Activez-la avec le lien affiché, attendez une minute, puis relancez. |
 | Notion : « Page racine introuvable » | Partagez la page avec l’intégration (§5, étape 2). |
 | Base Notion supprimée par erreur | Elle est recréée à la publication suivante ; les anciennes pages ne sont pas modifiées. |
-| Erreur 429 / 5xx | Relances automatiques avec attente ; sinon relancez l'étape plus tard depuis Enregistrements. |
+| Erreur 429 / 5xx | Relances automatiques avec attente ; sinon « Réessayer » plus tard depuis l'Historique. |
 
 ## 11. Développement
 
