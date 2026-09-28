@@ -1,0 +1,53 @@
+{# Supports de cours d'un enregistrement (se recharge toutes les 2 s pendant la lecture d'un fichier). #}
+<section class="card" id="supports" aria-labelledby="supports-title"
+         {% if supports_reading %}hx-get="/fragments/recording/{{ rec.id }}/supports" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  <div class="card-head">
+    <h2 id="supports-title"><span aria-hidden="true">📑</span> Support de cours</h2>
+    <form method="post" action="/enregistrements/{{ rec.id }}/supports" enctype="multipart/form-data">
+      <label class="btn small">Ajouter un support…
+        <input type="file" name="files" multiple accept="{{ support_accept }}" class="visually-hidden" data-autosubmit required></label>
+    </form>
+  </div>
+  {% if supports %}
+  <ul class="rows compact">
+    {% for s in supports %}
+    <li>
+      <div class="row-main">
+        <a class="row-title" href="/enregistrements/{{ rec.id }}/supports/{{ s.id }}" target="_blank" rel="noopener">{{ s.filename }}</a>
+        <div class="small muted">
+          {%- set unit = 'diapositive' if s.stored_name.endswith('.pptx') else 'page' %}
+          {%- if s.status == 'done' %}{{ s.pages }} {{ unit }}{{ 's' if s.pages > 1 }} lue{{ 's' if s.pages > 1 }}{% if s.method == 'local' %} (lecture locale, sans les formules){% endif %}
+            {%- if s.used_at %} · utilisé pour le cours{% elif files.course %} · pas encore utilisé{% endif %}
+          {%- elif s.status == 'error' %}<span class="warn-text">Illisible : {{ s.error }}</span>
+          {%- else %}<span class="spinner" aria-hidden="true"></span> Lecture en cours…{% endif %}
+          · {% if s.size < 1048576 %}{{ [1, (s.size / 1024)|round|int]|max }} Ko{% else %}{{ '%.1f'|format(s.size / 1048576)|replace('.', ',') }} Mo{% endif %}
+        </div>
+      </div>
+      <div class="row-side">
+        {% if s.status == 'done' %}<a class="small" href="/enregistrements/{{ rec.id }}/supports/{{ s.id }}/texte" target="_blank" rel="noopener">Texte lu</a>{% endif %}
+        {% if s.status == 'error' %}
+        <form method="post" action="/enregistrements/{{ rec.id }}/supports/{{ s.id }}/relire" class="inline-form">
+          <button class="link small">Relire</button></form>
+        {% endif %}
+        <form method="post" action="/enregistrements/{{ rec.id }}/supports/{{ s.id }}/delete" class="inline-form"
+              onsubmit="return confirm('Retirer ce support ? Le cours déjà rédigé ne change pas.')">
+          <button class="link small" aria-label="Retirer « {{ s.filename }} »">Retirer</button></form>
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% if supports_unused and files.course and rec.status != 'recording' %}
+  <div class="notice bar">
+    <p>Le cours actuel a été rédigé sans {{ 'ce support' if supports_unused|length == 1 else 'ces supports' }}.
+      {% if rec.notion_page_id %}<span class="muted">Une nouvelle page Notion (v{{ (rec.notion_version or 1) + 1 }}) sera créée ; l'actuelle et vos annotations restent.</span>{% endif %}</p>
+    <form method="post" action="/enregistrements/{{ rec.id }}/action" class="inline-form">
+      <input type="hidden" name="action" value="format"><input type="hidden" name="notion_mode" value="new_version">
+      <button class="primary small" {{ 'disabled' if busy }}>Refaire le cours avec {{ 'le support' if supports_unused|length == 1 else 'les supports' }}</button>
+    </form>
+  </div>
+  {% endif %}
+  {% else %}
+  <p class="small muted">Diapositives ou PDF du cours (PDF, PPTX, DOCX, 50 Mo max.). La mise en forme s'en sert pour écrire
+    exactement les termes, formules et énoncés, en restant fidèle à ce qui a été dit.</p>
+  {% endif %}
+</section>

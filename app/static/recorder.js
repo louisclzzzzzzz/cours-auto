@@ -66,6 +66,7 @@
     ui.importBox.hidden = !idle;
     $("btn-import").disabled = !idle || st.importing;
     ui.picker.disabled = !idle || st.importing;
+    $("btn-support").disabled = mode === "finishing" || st.importing;
     ui.panel.classList.toggle("is-recording", mode === "recording");
     ui.panel.classList.toggle("is-paused", mode === "paused");
     document.querySelectorAll("[data-resume],[data-finalize]").forEach((b) => { b.disabled = !idle; });
@@ -389,6 +390,7 @@
       st.recId = res.id;
       showSummary(sel.title, `${sel.detail} · enregistrement n° ${res.id}`);
       begin(stream, mime, res);
+      uploadSupports(res.id);
       document.body.dispatchEvent(new Event("refresh-latest"));
     } catch (err) {
       stream.getTracks().forEach((t) => t.stop());
@@ -408,6 +410,7 @@
       showSummary(`Reprise de l'enregistrement n° ${id}`, `nouveau segment (${seg.segment}), assemblé automatiquement`);
       document.querySelectorAll(`[data-active-recording="${id}"]`).forEach((el) => el.classList.add("hidden"));
       begin(stream, mime, seg);
+      uploadSupports(Number(id));
     } catch (err) {
       stream.getTracks().forEach((t) => t.stop());
       throw err;
@@ -466,6 +469,7 @@
     st.recId = null;
     st.recorder = null;
     st.stream = null;
+    clearSentSupports();
     setMode("idle");
     ui.start.focus();
     refreshSelection();
@@ -476,6 +480,76 @@
     if (!confirm("Terminer cet enregistrement avec l'audio déjà reçu et lancer le traitement ?")) return;
     try { await api("POST", `/api/recordings/${id}/stop`, {}); location.reload(); } catch (err) { setStatus(`⚠️ ${err.message}`); }
   }
+
+  // --- Support de cours (diapositives, PDF) -------------------------------------------------------------
+  // Choisi avant l'enregistrement : envoyé dès sa création (ou avec le fichier audio importé).
+  // Choisi pendant l'enregistrement : envoyé aussitôt. Le serveur le lit ensuite (OCR) pour la mise en forme.
+  const SUPPORT_EXT = [".pdf", ".pptx", ".docx"];
+  const SUPPORT_MAX = 50 * 1024 * 1024;
+  const SUPPORT_STATES = { staged: "joint au prochain enregistrement ou import", sending: "envoi…", sent: "envoyé ✓" };
+  const sup = { button: $("btn-support"), file: $("support-file"), list: $("support-list"), items: [] };
+
+  function supportProblem(file) {
+    const name = file.name.toLowerCase();
+    if (!SUPPORT_EXT.some((ext) => name.endsWith(ext))) return "format non pris en charge (PDF, PPTX ou DOCX ; exportez Keynote en PDF)";
+    if (file.size > SUPPORT_MAX) return "plus de 50 Mo";
+    if (!file.size) return "fichier vide";
+    return "";
+  }
+
+  function renderSupports() {
+    sup.list.replaceChildren(...sup.items.map((it) => {
+      const li = document.createElement("li");
+      const state = document.createElement("span");
+      state.className = it.state === "error" ? "warn-text" : "muted";
+      state.textContent = it.state === "error" ? `⚠️ ${it.message}` : SUPPORT_STATES[it.state];
+      li.append(`📑 ${it.file.name} — `, state);
+      if (it.state === "staged" || it.state === "error") {
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "link small";
+        remove.textContent = "retirer";
+        remove.setAttribute("aria-label", `Retirer ${it.file.name}`);
+        remove.addEventListener("click", () => { sup.items.splice(sup.items.indexOf(it), 1); renderSupports(); });
+        li.append(" ", remove);
+      }
+      return li;
+    }));
+  }
+
+  function clearSentSupports() {
+    sup.items = sup.items.filter((it) => it.state !== "sent");
+    renderSupports();
+  }
+
+  async function uploadSupports(recId) {
+    for (const it of sup.items.filter((x) => x.state === "staged")) {
+      it.state = "sending";
+      renderSupports();
+      const form = new FormData();
+      form.append("files", it.file);
+      try {
+        const res = await fetch(`/api/recordings/${recId}/supports`, { method: "POST", body: form });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || `erreur ${res.status}`);
+        it.state = "sent";
+      } catch (err) {
+        it.state = "error";
+        it.message = `non envoyé (${err.message}) : ajoutez-le depuis l'Historique`;
+      }
+      renderSupports();
+    }
+  }
+
+  sup.button.addEventListener("click", () => { sup.file.value = ""; sup.file.click(); });
+  sup.file.addEventListener("change", () => {
+    for (const file of sup.file.files) {
+      const problem = supportProblem(file);
+      sup.items.push({ file, state: problem ? "error" : "staged", message: problem });
+    }
+    renderSupports();
+    if (st.recId && (st.mode === "recording" || st.mode === "paused")) uploadSupports(st.recId);
+  });
 
   // --- Import d'un fichier audio -------------------------------------------------------------------
   const imp = { file: $("import-file"), button: $("btn-import"), progress: $("import-progress"), status: $("import-status") };
@@ -496,12 +570,16 @@
     if (!file) return;
     const sel = currentSelection();
     if (sel.error) { selectionProblem(sel.error, imp.status); return; }
-    if (!confirm(`Importer « ${file.name} » pour ${sel.label} ?\n\nLe fichier sera transcrit, mis en forme puis publié comme un enregistrement.`)) {
+    const staged = sup.items.filter((it) => it.state === "staged");
+    const withSupports = staged.length ? `\nSupport du cours : ${staged.map((it) => it.file.name).join(", ")}` : "";
+    if (!confirm(`Importer « ${file.name} » pour ${sel.label} ?${withSupports}\n\nLe fichier sera transcrit, mis en forme puis publié comme un enregistrement.`)) {
       imp.file.value = "";
       return;
     }
     const form = new FormData();
     form.append("file", file);
+    staged.forEach((it) => { form.append("support", it.file); it.state = "sending"; });
+    renderSupports();
     const p = sel.payload;
     ["subject_id", "subject_name", "course_type", "teacher", "session_date"].forEach((k) => {
       if (p[k] !== null && p[k] !== undefined) form.append(k, p[k]);
@@ -531,14 +609,22 @@
       try { data = JSON.parse(xhr.responseText); } catch (err) { /* réponse non JSON */ }
       if (xhr.status >= 200 && xhr.status < 300) {
         imp.file.value = "";
+        staged.forEach((it) => { it.state = "sent"; });
+        clearSentSupports();
         done(`✅ « ${file.name} » importé (${fmt(data.duration || 0)}) : le traitement a démarré (suivi ci-dessous).`
           + (data.warning ? ` ⚠️ ${data.warning}` : ""));
         document.body.dispatchEvent(new Event("refresh-latest"));
       } else {
+        staged.forEach((it) => { it.state = "staged"; });
+        renderSupports();
         done(`❌ Import refusé : ${data.detail || `erreur ${xhr.status}`}`);
       }
     };
-    xhr.onerror = () => done("❌ Échec de l'envoi (serveur injoignable ?).");
+    xhr.onerror = () => {
+      staged.forEach((it) => { it.state = "staged"; });
+      renderSupports();
+      done("❌ Échec de l'envoi (serveur injoignable ?).");
+    };
     xhr.send(form);
   }
 

@@ -43,6 +43,7 @@ DEFAULT_SETTINGS: dict[str, str] = {
     # « high » = le modèle réfléchit avant de répondre (plus lent, plus de tokens). Vide = paramètre non envoyé.
     "llm_reasoning_effort": "high",
     "transcription_model": "voxtral-mini-latest",
+    "ocr_model": "mistral-ocr-latest",  # lecture des supports de cours (PDF, PPTX, DOCX)
     "transcription_language": "fr",
     # Au-delà de cette taille (caractères), la transcription est découpée en blocs pour le LLM.
     "llm_chunk_chars": "60000",
@@ -52,6 +53,10 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "drive_root_name": "Cours M1",
     "drive_upload_sources": "0",
     "drive_notebooklm": "1",
+    # Qui rédige les cours dans Drive : « app » (séances, cours complet, _etat.md, Google Doc) ou
+    # « automatisation » : l'app dépose seulement transcriptions et supports (dossiers Transcriptions/ et
+    # Supports/ de chaque matière) ; une automatisation externe rédige le reste.
+    "drive_writer": "app",
     "consent_reminder_dismissed": "0",
 }
 

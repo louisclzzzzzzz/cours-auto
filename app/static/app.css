@@ -371,6 +371,9 @@ fieldset:disabled .slot { cursor: default; opacity: 0.7; }
 .rec-status { min-height: 1.4em; margin: 0.4rem 0; }
 .mic-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.6rem; font-size: 0.875rem; }
 .mic-row select { flex: 1 1 11rem; min-width: 0; min-height: 2rem; padding: 0.25rem 0.5rem; font-size: 0.875rem; }
+.support-pick { margin: 0.5rem 0 0; }
+.support-list { list-style: none; margin: 0.35rem 0 0; padding: 0; display: grid; gap: 0.2rem; overflow-wrap: anywhere; }
+label.btn:focus-within { outline: 2px solid var(--primary); outline-offset: 2px; }
 .import-audio { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); text-align: center; }
 .import-audio progress { width: 100%; margin-top: 0.6rem; }
 .import-audio p { margin: 0.4rem 0 0; }

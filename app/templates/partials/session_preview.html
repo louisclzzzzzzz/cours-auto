@@ -20,6 +20,7 @@
     {% if rec.drive_md_url %}<a class="menu-item ext" href="{{ rec.drive_md_url }}" target="_blank" rel="noopener">Fichier sur Drive</a>{% endif %}
     {% if rec.drive_annot_url %}<a class="menu-item ext" href="{{ rec.drive_annot_url }}" target="_blank" rel="noopener">Fichier annoté sur Drive</a>{% endif %}
     {% for p in old_pages %}<a class="menu-item ext" href="{{ p.url }}" target="_blank" rel="noopener">Ancienne page Notion (v{{ p.version }})</a>{% endfor %}
+    <a class="menu-item" href="/enregistrements/{{ rec.id }}#supports">{{ 'Supports de cours (%d)' % n_supports if n_supports else 'Ajouter le support de cours (diapos, PDF)…' }}</a>
     <a class="menu-item" href="/enregistrements/{{ rec.id }}/cours.md{{ '?annote=1' if use_annot }}" download>Télécharger le Markdown</a>
     <a class="menu-item" href="/enregistrements/{{ rec.id }}">Audio, transcription et traitement</a>
   {% endcall %}

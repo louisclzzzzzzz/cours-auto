@@ -76,6 +76,7 @@ def save_models(
     llm_max_tokens: int = Form(32000),
     llm_reasoning_effort: str = Form("high"),
     audio_bitrate: str = Form("48k"),
+    ocr_model: str = Form(""),
 ):
     if not re.fullmatch(r"\d{2,3}k", audio_bitrate.strip()):
         return redirect("/parametres#mistral", "Débit audio invalide (ex. 48k).", "err")
@@ -84,6 +85,7 @@ def save_models(
     db.set_setting("llm_model", llm_model.strip() or config.DEFAULT_SETTINGS["llm_model"])
     db.set_setting("llm_reasoning_effort", llm_reasoning_effort)
     db.set_setting("transcription_model", transcription_model.strip() or "voxtral-mini-latest")
+    db.set_setting("ocr_model", ocr_model.strip() or config.DEFAULT_SETTINGS["ocr_model"])
     db.set_setting("transcription_language", transcription_language.strip())
     db.set_setting("llm_chunk_chars", str(max(llm_chunk_chars, 5000)))
     db.set_setting("llm_max_tokens", str(max(llm_max_tokens, 2000)))
@@ -99,10 +101,17 @@ def test_mistral(request: Request):
 
 @router.post("/parametres/drive")
 def save_drive(drive_root_name: str = Form("Cours M1"), drive_notebooklm: str = Form(""),
-               drive_upload_sources: str = Form("")):
+               drive_upload_sources: str = Form(""), drive_writer: str = Form("app")):
+    if drive_writer not in ("app", "automatisation"):
+        return redirect("/parametres#drive", "Mode de rédaction inconnu.", "err")
     db.set_setting("drive_root_name", drive_root_name.strip() or "Cours M1")
     db.set_setting("drive_notebooklm", "1" if drive_notebooklm else "0")
     db.set_setting("drive_upload_sources", "1" if drive_upload_sources else "0")
+    db.set_setting("drive_writer", drive_writer)
+    if drive_writer == "automatisation":
+        return redirect("/parametres#drive", "Mode automatisation : les prochaines transcriptions (et leurs supports) "
+                                             "seront déposées dans Drive ; l'app n'écrit plus les séances, le cours "
+                                             "complet, _etat.md ni le Google Doc.")
     return redirect("/parametres#drive", "Options Drive enregistrées.")
 
 
