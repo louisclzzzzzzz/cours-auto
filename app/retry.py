@@ -30,6 +30,11 @@ def _status_and_retry_after(exc: BaseException) -> tuple[int | None, float | Non
     return status, retry_after
 
 
+def status_of(exc: BaseException) -> int | None:
+    """Code HTTP renvoyé par l'API (None pour une erreur réseau ou locale)."""
+    return _status_and_retry_after(exc)[0]
+
+
 def is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, (httpx.TransportError, TimeoutError, ConnectionError)):
         return True

@@ -63,7 +63,7 @@ def latest_context() -> dict:
     """Derniers traitements de l'accueil ; le rafraîchissement automatique ne tourne que si l'un d'eux avance."""
     recs = db.list_recordings(limit=5)
     polling = any(r["status"] in BUSY_STATUSES or r["status"] == "recording" or pipeline.is_active(r["id"])
-                  for r in recs)
+                  or r.get("auto_retry_at") for r in recs)
     return {"recs": recs, "polling": polling}
 
 

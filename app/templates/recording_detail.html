@@ -13,7 +13,7 @@
 </div>
 
 <section class="card" id="status-card" aria-labelledby="status-title"
-         {% if busy %}hx-get="/fragments/recording/{{ rec.id }}/status" hx-trigger="every 3s" hx-swap="innerHTML"{% endif %}>
+         {% if busy or rec.auto_retry_at %}hx-get="/fragments/recording/{{ rec.id }}/status" hx-trigger="every 3s" hx-swap="innerHTML"{% endif %}>
   {% include "partials/recording_status.html" %}
 </section>
 

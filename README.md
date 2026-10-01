@@ -190,7 +190,7 @@ data/
 | Drive : « L’API Google Drive n’est pas activée » | Activez-la avec le lien affiché, attendez une minute, puis relancez. |
 | Notion : « Page racine introuvable » | Partagez la page avec l’intégration (§5, étape 2). |
 | Base Notion supprimée par erreur | Elle est recréée à la publication suivante ; les anciennes pages ne sont pas modifiées. |
-| Erreur 429 / 5xx | Relances automatiques avec attente ; sinon « Réessayer » plus tard depuis l'Historique. |
+| Mistral indisponible (erreur 503, 429, réseau) | Rien n'est perdu : la transcription ou la mise en forme est relancée toute seule (5, 10, 20, 40 min puis toutes les heures, pendant ~17 h ; l'heure du prochain essai est affichée). Pour la transcription, une seconde de silence vérifie d'abord que Mistral répond, sans renvoyer tout l'audio. « Réessayer » relance tout de suite. |
 | Support « illisible » | Document scanné vide ou protégé : « Relire », ou exportez-le à nouveau en PDF. |
 
 ## 11. Développement

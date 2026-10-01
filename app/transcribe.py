@@ -3,9 +3,11 @@ context biasing avec le vocabulaire de la matière."""
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import re
+import wave
 from collections import defaultdict
 from pathlib import Path
 
@@ -66,7 +68,25 @@ def _call(path: Path, **kwargs):
                 **kwargs,
             )
 
-    return with_retries(once, attempts=5, label="Transcription Voxtral")
+    # Peu d'essais rapprochés (chacun renvoie tout l'audio) : si Mistral reste indisponible, la pipeline
+    # reprogramme l'étape plus tard.
+    return with_retries(once, attempts=3, label="Transcription Voxtral")
+
+
+def probe() -> None:
+    """Vérifie que le service de transcription répond, avec une seconde de silence (coût négligeable) :
+    pendant une panne, on évite de renvoyer tout l'audio du cours à chaque essai. Lève l'erreur de l'API."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\x00\x00" * 16000)
+    get_client().audio.transcriptions.complete(
+        model=db.get_setting("transcription_model") or "voxtral-mini-latest",
+        file={"content": buf.getvalue(), "file_name": "sonde.wav"},
+        timeout_ms=120_000,
+    )
 
 
 def transcribe_file(path: Path, vocabulary: list[str], recording_id: int | None = None) -> dict:

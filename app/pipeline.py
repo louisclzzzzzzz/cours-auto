@@ -13,9 +13,9 @@ import queue
 import threading
 import traceback
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from . import db, llm, recorder, subjects, supports, transcribe
+from . import db, llm, recorder, retry, subjects, supports, transcribe
 from .publish import PublishSkipped
 from .publish import drive as drive_pub
 from .publish import notion as notion_pub
@@ -52,8 +52,28 @@ STEP_LABELS = {
     "publish_notion": "publication Notion",
     "import_annotations": "import des annotations",
 }
+STEP_ACTIONS = {label: step for step, label in STEP_LABELS.items()}  # libellé d'étape en échec → étape
 CHAIN = ["finalize", "transcribe", "format", "publish"]
 BUSY_STATUSES = {"finalizing", "transcribing", "formatting", "publishing"}
+
+# Étapes qui dépendent de Mistral : s'il est momentanément indisponible (5xx, 429, réseau), l'étape est
+# relancée toute seule plus tard (5, 10, 20, 40 min puis toutes les heures, environ 17 h au total).
+AUTO_RETRY_STEPS = {"transcribe", "format"}
+AUTO_RETRY_MAX = 20
+
+
+def auto_retry_delay(attempt: int) -> timedelta:
+    return timedelta(minutes=min(5 * 2 ** (attempt - 1), 60))
+
+
+def unavailable_message(step: str, exc: BaseException) -> str:
+    status = retry.status_of(exc)
+    if status == 429:
+        return "Mistral limite temporairement les requêtes (erreur 429)."
+    if status:
+        service = "de transcription de Mistral" if step == "transcribe" else "de Mistral"
+        return f"Le service {service} est momentanément indisponible (erreur {status})."
+    return "Connexion à Mistral impossible (réseau coupé ou délai dépassé)."
 
 
 @dataclass(frozen=True)
@@ -144,6 +164,43 @@ class Pipeline:
             recorder.mark_stale_interrupted()
         except Exception:  # noqa: BLE001
             log.exception("Vérification des enregistrements interrompus impossible")
+        try:
+            self.submit_due_retries()
+        except Exception:  # noqa: BLE001
+            log.exception("Essais automatiques impossibles")
+
+    def submit_due_retries(self) -> list[int]:
+        """Relance les étapes en échec dont l'essai automatique est arrivé à échéance."""
+        now = datetime.now().astimezone()
+        submitted = []
+        for rec in db.q("SELECT id, error_step, auto_retry_at FROM recordings "
+                        "WHERE status = 'error' AND auto_retry_at IS NOT NULL"):
+            try:
+                due = datetime.fromisoformat(rec["auto_retry_at"]) <= now
+            except ValueError:
+                due = True
+            step = STEP_ACTIONS.get(rec["error_step"] or "")
+            if not due or step not in AUTO_RETRY_STEPS:
+                continue
+            db.update_recording(rec["id"], auto_retry_at=None)
+            db.log(rec["id"], f"Essai automatique : relance de l'étape « {rec['error_step']} ».")
+            if self.submit("recording", rec["id"], step):
+                submitted.append(rec["id"])
+        return submitted
+
+    def _schedule_auto_retry(self, rid: int, step: str, exc: BaseException) -> str | None:
+        """Mistral momentanément indisponible : programme un nouvel essai et renvoie le message d'erreur à afficher."""
+        if step not in AUTO_RETRY_STEPS or not retry.is_retryable(exc):
+            return None
+        attempt = ((db.get_recording(rid) or {}).get("auto_retry_count") or 0) + 1
+        message = unavailable_message(step, exc)
+        if attempt > AUTO_RETRY_MAX:
+            db.update_recording(rid, auto_retry_at=None)
+            return message + " Les essais automatiques sont arrêtés : cliquez sur « Réessayer » quand le service sera rétabli."
+        when = datetime.now().astimezone() + auto_retry_delay(attempt)
+        db.update_recording(rid, auto_retry_at=when.isoformat(timespec="seconds"), auto_retry_count=attempt)
+        db.log(rid, f"Nouvel essai automatique vers {when:%H:%M} ({attempt}/{AUTO_RETRY_MAX}).", "warning")
+        return message + f" Nouvel essai automatique vers {when:%H:%M}, ou cliquez sur « Réessayer »."
 
     def _progress(self, recording_id: int | None, detail: str) -> None:
         if self.current is not None:
@@ -181,12 +238,15 @@ class Pipeline:
         }
         try:
             handlers[step](rid)
-            return True
         except Exception as exc:  # noqa: BLE001
             log.exception("Étape %s en échec pour l'enregistrement %s", step, rid)
-            db.update_recording(rid, status="error", error_step=STEP_LABELS.get(step, step), error_message=str(exc)[:2000])
+            message = self._schedule_auto_retry(rid, step, exc) or str(exc)
+            db.update_recording(rid, status="error", error_step=STEP_LABELS.get(step, step), error_message=message[:2000])
             db.log(rid, f"Échec ({STEP_LABELS.get(step, step)}) : {exc}\n{traceback.format_exc()[-1500:]}", "error")
             return False
+        if step in AUTO_RETRY_STEPS:
+            db.update_recording(rid, auto_retry_at=None, auto_retry_count=0)
+        return True
 
     # --- Étapes -------------------------------------------------------------------------------
     def step_finalize(self, rid: int) -> None:
@@ -209,6 +269,13 @@ class Pipeline:
         if not audio.exists():
             raise RuntimeError("Audio final absent : relancez d'abord la finalisation.")
         db.update_recording(rid, status="transcribing", error_step=None, error_message=None)
+        if rec.get("auto_retry_count"):
+            self._progress(rid, "Mistral était indisponible : vérification qu'il répond de nouveau…")
+            try:
+                transcribe.probe()
+            except Exception as exc:  # noqa: BLE001
+                if retry.is_retryable(exc):
+                    raise  # toujours indisponible : nouvel essai programmé, sans avoir renvoyé tout l'audio
         self._progress(rid, "Transcription Voxtral en cours…")
         data = transcribe.transcribe_file(audio, subjects.get_vocabulary(subject), rid)
         folder = recorder.recording_dir(rid)
