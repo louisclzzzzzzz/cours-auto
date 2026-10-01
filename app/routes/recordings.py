@@ -48,7 +48,8 @@ def _files(rid: int) -> dict:
 
 def _list_context() -> dict:
     recs = db.list_recordings()
-    polling = any(r["status"] in BUSY_STATUSES or r["status"] == "recording" or pipeline.is_active(r["id"]) for r in recs)
+    polling = any(r["status"] in BUSY_STATUSES or r["status"] == "recording" or pipeline.is_active(r["id"])
+                  or r.get("auto_retry_at") for r in recs)
     return {"recs": recs, "polling": polling}
 
 
@@ -239,6 +240,7 @@ def run_action(rid: int, action: str = Form(...), notion_mode: str = Form("new_v
         db.update_recording(rid, notion_pending_action="overwrite" if notion_mode == "overwrite" else "new_version")
     if action == "finalize":
         db.update_recording(rid, status="finalizing", ended_at=rec.get("ended_at") or db.now_iso())
+    db.update_recording(rid, auto_retry_at=None, auto_retry_count=0)  # relance manuelle : les essais auto repartent de zéro
     pipeline.submit("recording", rid, action, chain=action in CHAINED)
     return redirect(target, f"Relance mise en file : {STEP_LABELS.get(action, action)}.")
 

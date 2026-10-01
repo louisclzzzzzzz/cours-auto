@@ -153,6 +153,9 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         # Transcription déposée dans <Matière>/Transcriptions/ (mode « automatisation » de Drive)
         "drive_transcription_id": "TEXT",
         "drive_transcription_url": "TEXT",
+        # Mistral momentanément indisponible : date du prochain essai automatique et nombre d'essais faits
+        "auto_retry_at": "TEXT",
+        "auto_retry_count": "INTEGER NOT NULL DEFAULT 0",
     },
     "subjects": {
         "drive_transcriptions_folder_id": "TEXT",
