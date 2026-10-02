@@ -54,12 +54,13 @@
 
 <details class="card disclosure" id="avance">
   <summary>Relancer une étape ou supprimer</summary>
-  <p class="small muted">Chaque étape repart des fichiers conservés sur le disque, puis enchaîne les suivantes.</p>
+  <p class="small muted">Chaque étape repart des fichiers conservés sur le disque ; à partir de la transcription, elle enchaîne les suivantes.
+    Après l'audio, le traitement se lance à la main.</p>
   <ul class="action-list">
     <li>
       <div><strong>Audio</strong>
         <p class="small muted">
-          {%- if rec.status == 'interrupted' %}Assemble l'audio déjà reçu puis lance le traitement.
+          {%- if rec.status == 'interrupted' %}Assemble l'audio déjà reçu (le traitement se lance ensuite à la main).
           {%- elif not files.chunks.n and files.source %}Reconvertit le fichier importé ({{ rec.source_filename }}).
           {%- else %}Réassemble les {{ files.chunks.n }} morceaux reçus ({{ (files.chunks.total / 1048576)|round(1) }} Mo).{% endif %}</p></div>
       <form method="post" action="/enregistrements/{{ rec.id }}/action">

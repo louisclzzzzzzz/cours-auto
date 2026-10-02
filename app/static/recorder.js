@@ -444,7 +444,7 @@
 
   async function stop() {
     if (st.mode !== "recording" && st.mode !== "paused") return;
-    if (!confirm("Arrêter l'enregistrement et lancer le traitement (transcription, mise en forme, publication) ?")) return;
+    if (!confirm("Arrêter l'enregistrement ?\n\nL'audio sera préparé ; vous lancerez ensuite le traitement (transcription, mise en forme, publication) quand vous le voudrez.")) return;
     const rec = st.recorder;
     const stopped = new Promise((resolve) => rec.addEventListener("stop", resolve, { once: true }));
     st.elapsedBase = elapsed();
@@ -462,7 +462,8 @@
     if (!flushed) setStatus("⚠️ Certains morceaux n'ont pas pu être envoyés : l'enregistrement sera finalisé avec ce qui a été reçu.");
     try {
       const res = await api("POST", `/api/recordings/${st.recId}/stop`, { elapsed: st.elapsedBase });
-      setStatus(res.ok ? "✅ Enregistrement terminé : le traitement a démarré (suivi ci-dessous)." : "⚠️ Aucun audio reçu : enregistrement en erreur.");
+      setStatus(res.ok ? "✅ Enregistrement terminé. Une fois l'audio prêt, lancez le traitement depuis « Derniers traitements » ci-dessous."
+        : "⚠️ Aucun audio reçu : enregistrement en erreur.");
     } catch (err) {
       setStatus(`⚠️ Arrêt non confirmé par le serveur (${err.message}). Terminez-le depuis l'Historique.`);
     }
@@ -477,7 +478,7 @@
   }
 
   async function finalizeExisting(id) {
-    if (!confirm("Terminer cet enregistrement avec l'audio déjà reçu et lancer le traitement ?")) return;
+    if (!confirm("Terminer cet enregistrement avec l'audio déjà reçu ? Vous lancerez ensuite le traitement.")) return;
     try { await api("POST", `/api/recordings/${id}/stop`, {}); location.reload(); } catch (err) { setStatus(`⚠️ ${err.message}`); }
   }
 
@@ -572,7 +573,7 @@
     if (sel.error) { selectionProblem(sel.error, imp.status); return; }
     const staged = sup.items.filter((it) => it.state === "staged");
     const withSupports = staged.length ? `\nSupport du cours : ${staged.map((it) => it.file.name).join(", ")}` : "";
-    if (!confirm(`Importer « ${file.name} » pour ${sel.label} ?${withSupports}\n\nLe fichier sera transcrit, mis en forme puis publié comme un enregistrement.`)) {
+    if (!confirm(`Importer « ${file.name} » pour ${sel.label} ?${withSupports}\n\nL'audio sera préparé ; vous lancerez ensuite le traitement (transcription, mise en forme, publication).`)) {
       imp.file.value = "";
       return;
     }
@@ -611,7 +612,7 @@
         imp.file.value = "";
         staged.forEach((it) => { it.state = "sent"; });
         clearSentSupports();
-        done(`✅ « ${file.name} » importé (${fmt(data.duration || 0)}) : le traitement a démarré (suivi ci-dessous).`
+        done(`✅ « ${file.name} » importé (${fmt(data.duration || 0)}). Une fois l'audio prêt, lancez le traitement depuis « Derniers traitements » ci-dessous.`
           + (data.warning ? ` ⚠️ ${data.warning}` : ""));
         document.body.dispatchEvent(new Event("refresh-latest"));
       } else {

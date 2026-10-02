@@ -3,6 +3,9 @@
 recording → finalizing → uploaded → transcribing → transcribed → formatting → formatted → publishing → done
 (+ error avec l'étape en échec). La publication a un sous-statut par destination (drive, notion).
 Chaque étape relit ses entrées sur le disque : elles sont idempotentes et relançables.
+
+À l'arrêt (ou à l'import), seul l'audio est préparé : l'enregistrement attend ensuite en « uploaded »
+que l'utilisateur lance le traitement (transcription → mise en forme → publication).
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ STATUS_LABELS = {
     "recording": "Enregistrement en cours",
     "interrupted": "Interrompu",
     "finalizing": "Finalisation audio…",
-    "uploaded": "Audio prêt",
+    "uploaded": "Prêt à traiter",
     "transcribing": "Transcription…",
     "transcribed": "Transcrit",
     "formatting": "Mise en forme…",
@@ -53,7 +56,7 @@ STEP_LABELS = {
     "import_annotations": "import des annotations",
 }
 STEP_ACTIONS = {label: step for step, label in STEP_LABELS.items()}  # libellé d'étape en échec → étape
-CHAIN = ["finalize", "transcribe", "format", "publish"]
+CHAIN = ["transcribe", "format", "publish"]  # la finalisation de l'audio n'enchaîne pas : traitement lancé à la main
 BUSY_STATUSES = {"finalizing", "transcribing", "formatting", "publishing"}
 
 # Étapes qui dépendent de Mistral : s'il est momentanément indisponible (5xx, 429, réseau), l'étape est
@@ -127,14 +130,15 @@ class Pipeline:
         return self._queue.qsize()
 
     def recover(self) -> None:
-        """Au démarrage : reprend les traitements interrompus par un arrêt de l'app."""
+        """Au démarrage : reprend les traitements interrompus par un arrêt de l'app. Un enregistrement dont
+        l'audio est prêt (« uploaded ») attend toujours que l'utilisateur lance le traitement."""
         for rec in db.list_recordings_by_status("recording"):
             db.update_recording(rec["id"], status="interrupted")
             db.log(rec["id"], "L'app a redémarré pendant l'enregistrement : marqué interrompu.", "warning")
         db.run("UPDATE recordings SET drive_status = 'pending' WHERE drive_status = 'running'")
         db.run("UPDATE recordings SET notion_status = 'pending' WHERE notion_status = 'running'")
         resume = {
-            "finalizing": "finalize", "uploaded": "transcribe", "transcribing": "transcribe",
+            "finalizing": "finalize", "transcribing": "transcribe",
             "transcribed": "format", "formatting": "format", "formatted": "publish", "publishing": "publish",
         }
         for rec in db.list_recordings_by_status(*resume):
@@ -258,7 +262,7 @@ class Pipeline:
         duration = recorder.finalize_audio(rid)
         db.update_recording(rid, status="uploaded", duration_seconds=duration)
         recorder.write_meta(rid)
-        self._progress(rid, f"Audio final prêt ({duration / 60:.1f} min).")
+        self._progress(rid, f"Audio final prêt ({duration / 60:.1f} min) : traitement à lancer.")
 
     def step_transcribe(self, rid: int) -> None:
         rec = db.get_recording(rid)

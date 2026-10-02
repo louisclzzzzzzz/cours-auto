@@ -45,11 +45,23 @@ def new_rec(sid, day="2026-09-21"):
     return rid
 
 
+def finalize_then_launch(p: pl.Pipeline, rid: int) -> None:
+    """Arrêt : seul l'audio est préparé ; le traitement est ensuite lancé à la main (« Lancer le traitement »)."""
+    p._run(pl.Job("recording", rid, "finalize"))
+    assert db.get_recording(rid)["status"] == "uploaded"
+    p._run(pl.Job("recording", rid, "transcribe"))
+
+
 def test_full_chain_and_state(fakes):
     sid = subjects.create_subject("Graphes")
     p = pl.Pipeline()
     r1 = new_rec(sid)
     p._run(pl.Job("recording", r1, "finalize"))
+    rec = db.get_recording(r1)
+    # La finalisation n'enchaîne pas : rien n'est envoyé à Mistral avant que l'utilisateur lance le traitement.
+    assert rec["status"] == "uploaded" and rec["duration_seconds"] == 3600.0
+    assert not (recorder.recording_dir(r1) / "transcript.json").exists() and fakes["drive"] == 0
+    p._run(pl.Job("recording", r1, "transcribe"))
     rec = db.get_recording(r1)
     assert rec["status"] == "done", rec["error_message"]
     assert rec["title"] == "Séance 1" and rec["duration_seconds"] == 3600.0
@@ -64,7 +76,7 @@ def test_full_chain_and_state(fakes):
 
     # Séance suivante : l'état de départ est celui produit par la séance 1.
     r2 = new_rec(sid, "2026-09-28")
-    p._run(pl.Job("recording", r2, "finalize"))
+    finalize_then_launch(p, r2)
     assert "- CM 1" in fakes["state_inputs"][-1]
     assert "- CM 2" in subjects.read_state(db.get_subject(sid))
 
@@ -90,7 +102,7 @@ def test_publication_substatuses(fakes, monkeypatch):
 
     monkeypatch.setattr(pl.drive_pub, "publish_recording", drive_skip)
     monkeypatch.setattr(pl.notion_pub, "publish_recording", notion_fail)
-    p._run(pl.Job("recording", rid, "finalize"))
+    finalize_then_launch(p, rid)
     rec = db.get_recording(rid)
     assert rec["status"] == "error" and rec["error_step"] == "publication"
     assert rec["drive_status"] == "skipped" and rec["notion_status"] == "error"
@@ -111,7 +123,7 @@ def test_error_step_and_restart(fakes, monkeypatch):
         raise RuntimeError("429 trop de requêtes")
 
     monkeypatch.setattr(transcribe, "transcribe_file", boom)
-    p._run(pl.Job("recording", rid, "finalize"))
+    finalize_then_launch(p, rid)
     rec = db.get_recording(rid)
     assert rec["status"] == "error" and rec["error_step"] == "transcription"
     assert recorder.audio_path(rid).exists()  # l'audio est conservé
@@ -126,10 +138,14 @@ def test_recover_after_restart(fakes):
     rid = recorder.create_recording(subject_id=sid, course_type="TD", session_date="2026-09-21")
     other = new_rec(sid)
     db.update_recording(other, status="transcribing")
+    waiting = new_rec(sid)
+    db.update_recording(waiting, status="uploaded")
     p = pl.Pipeline()
     p.recover()
     assert db.get_recording(rid)["status"] == "interrupted"
     assert ("recording", other, "transcribe") in p._pending
+    # Audio prêt mais traitement jamais lancé : il attend toujours l'utilisateur.
+    assert not p.is_active(waiting) and db.get_recording(waiting)["status"] == "uploaded"
 
 
 def test_format_sets_notion_pending_action_via_route(fakes):

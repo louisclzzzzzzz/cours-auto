@@ -16,10 +16,11 @@
 <body>
   <a class="skip-link" href="#main">Aller au contenu</a>
   <header class="topbar">
-    <a class="brand" href="/"><span aria-hidden="true">🎙️</span> Cours auto</a>
+    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">{{ icons.mic|safe }}</span> Cours auto</a>
     <nav aria-label="Navigation principale">
+      <p class="nav-title" aria-hidden="true">Espace de travail</p>
       {% for href, label, active in nav %}
-        <a href="{{ href }}"{% if active %} class="active" aria-current="page"{% endif %}>{{ label }}</a>
+        <a href="{{ href }}"{% if active %} class="active" aria-current="page"{% endif %}>{{ icons[href]|safe }}{{ label }}</a>
       {% endfor %}
     </nav>
     <div class="worker" hx-get="/fragments/worker" hx-trigger="load, every 4s" hx-swap="innerHTML"></div>

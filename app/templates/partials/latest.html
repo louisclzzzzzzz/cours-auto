@@ -1,4 +1,4 @@
-{% from "macros.html" import status_badge, session_name %}
+{% from "macros.html" import status_badge, session_name, launch_button %}
 {# Se recharge sur l'événement « refresh-latest » (enregistreur) et toutes les 4 s tant qu'un traitement avance. #}
 <div id="latest" hx-get="/fragments/latest" hx-swap="outerHTML"
      hx-trigger="refresh-latest from:body{{ ', every 4s' if polling }}">
@@ -16,6 +16,7 @@
       <div class="row-side">
         <span class="small muted nowrap">{{ r.session_date|fr_short_date }}</span>
         {{ status_badge(r) }}
+        {{ launch_button(r, "/") }}
       </div>
     </li>
     {% endfor %}

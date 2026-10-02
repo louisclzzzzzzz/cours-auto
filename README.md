@@ -4,7 +4,7 @@ Application web **locale** (FastAPI, ouverte dans le navigateur) pour enregistre
 
 1. choix du cours dans l'emploi du temps ADE (`.ics`) ;
 2. enregistrement audio robuste dans le navigateur (morceaux envoyés au serveur toutes les 30 s), **ou import d'un fichier audio** (téléphone, dictaphone…) ;
-3. transcription **Mistral Voxtral** (diarisation, horodatage, vocabulaire de la matière) → mise en forme du cours par **Mistral Small 4** → mise à jour de l'« état » de la matière ;
+3. sur votre demande (bouton « Lancer le traitement »), transcription **Mistral Voxtral** (diarisation, horodatage, vocabulaire de la matière) → mise en forme du cours par **Mistral Small 4** → mise à jour de l'« état » de la matière ;
 4. publication vers **Google Drive** (archive Markdown + Google Doc pour NotebookLM) et **Notion** (lecture et annotation), consultation des cours avec rendu des formules (KaTeX).
 
 Le disque local (`data/`) est la source de vérité. Usage personnel, aucune authentification : l'app n'écoute que sur `127.0.0.1`.
@@ -123,9 +123,9 @@ Ajoutez **une seule fois** le Google Doc « <Matière> – NotebookLM » comme s
 ## 7. Utilisation au quotidien
 
 1. **Enregistrer** (accueil) : ① choisissez le cours — le créneau en cours est présélectionné ; sinon cliquez sur un créneau, changez de jour (‹ ›, ou « Voir le prochain jour de cours » les jours sans cours) ou prenez « Autre cours » (hors emploi du temps) — puis ② **Démarrer**. Seuls les boutons utiles s'affichent ensuite (Pause / Reprendre / Arrêter) et le choix du cours est verrouillé pendant l'enregistrement. Le micro se choisit et se teste (« Tester », vumètre) sous le bouton.
-   **Importer un fichier audio…** (même carte) : pour un cours enregistré avec un autre appareil (mp3, m4a, wav, ogg, webm, flac, vidéo mp4…). Choisissez d'abord le cours, cliquez « Importer un fichier audio… » puis sélectionnez le fichier ; une confirmation rappelle le cours choisi. Le fichier d'origine est conservé (`source.<ext>`), converti en MP3 mono 16 kHz puis traité comme un enregistrement. Voxtral accepte jusqu'à ~3 h par fichier.
+   **Importer un fichier audio…** (même carte) : pour un cours enregistré avec un autre appareil (mp3, m4a, wav, ogg, webm, flac, vidéo mp4…). Choisissez d'abord le cours, cliquez « Importer un fichier audio… » puis sélectionnez le fichier ; une confirmation rappelle le cours choisi. Le fichier d'origine est conservé (`source.<ext>`) et converti en MP3 mono 16 kHz ; il attend ensuite, comme un enregistrement, que vous lanciez le traitement. Voxtral accepte jusqu'à ~3 h par fichier.
    **Support de cours** (diapositives, PDF) : « 📑 Ajouter le support du cours… », sous le cours choisi. Choisi avant de démarrer, il est envoyé dès le début de l'enregistrement (ou avec le fichier audio importé) ; pendant l'enregistrement, il part aussitôt. On peut aussi l'ajouter plus tard depuis l'Historique (voir « Support de cours » ci-dessous).
-2. À l'arrêt, le traitement démarre en arrière-plan (un à la fois) : `finalisation audio → transcription → mise en forme → publication`. Le statut se met à jour en direct sur l'accueil (« Derniers traitements »), dans la barre du haut et dans **Historique**.
+2. À l'arrêt (ou après un import), seul l'audio est préparé (assemblage ou conversion, en local) : l'enregistrement passe en **« Prêt à traiter »**. Rien n'est envoyé à Mistral tant que vous n'avez pas cliqué sur **« Lancer le traitement »** — dans « Derniers traitements » sur l'accueil, dans **Historique** ou sur la fiche de l'enregistrement (où vous pouvez d'abord écouter l'audio ou joindre le support de cours). Le traitement tourne alors en arrière-plan (un à la fois) : `transcription → mise en forme → publication`. Le statut se met à jour en direct sur l'accueil, dans la barre du haut et dans **Historique**.
 3. **Historique** : la liste de tous les enregistrements ; un clic ouvre l'avancement en 4 étapes (audio → transcription → mise en forme → publication), avec un bouton **Réessayer** qui relance l'étape en échec, la section **Support de cours**, l'écoute et la transcription. Sections repliables : corriger les informations (matière, type, numéro…), relancer une étape précise (chaque étape repart des fichiers conservés), supprimer, journal technique.
 4. **Cours** : la liste des matières ; un clic ouvre les séances avec l'aperçu du cours (Markdown + formules), « Ouvrir dans Notion » et, dans le menu **⋯**, l'import des annotations Notion, les fichiers Drive, le téléchargement du Markdown. Au niveau de la matière : « Cours complet », et dans **⋯** le Google Doc NotebookLM, le dossier Drive, l'import des annotations de toutes les séances.
 5. **Cours → Réglages** (une matière) : **termes proposés** après chaque cours (cochez ceux à garder puis « Valider » ; les autres sont écartés), **vocabulaire** (≤ 100 termes envoyés à Voxtral), nom et enseignants, intitulés ADE associés (exact ou expression régulière), **mémoire de la matière** (état, éditable), suppression.
@@ -141,7 +141,7 @@ Joignez à une séance le support de l'enseignant — **PDF, PPTX ou DOCX** (50 
 ### Robustesse de l'enregistrement
 
 - Chaque morceau de 30 s est écrit immédiatement sur le disque (`data/recordings/<id>/chunk_XXXX.webm`).
-- Fermeture d'onglet, rechargement, veille, redémarrage de l'app : les morceaux reçus sont conservés. L'accueil affiche alors l'enregistrement comme **actif/interrompu** avec **« Reprendre »** (nouveau segment, assemblé automatiquement) ou **« Terminer et traiter »**. Au pire, les ~30 dernières secondes pas encore envoyées sont perdues.
+- Fermeture d'onglet, rechargement, veille, redémarrage de l'app : les morceaux reçus sont conservés. L'accueil affiche alors l'enregistrement comme **actif/interrompu** avec **« Reprendre »** (nouveau segment, assemblé automatiquement) ou **« Terminer »** (l'audio reçu est assemblé, puis le traitement se lance à la main). Au pire, les ~30 dernières secondes pas encore envoyées sont perdues.
 - Micro débranché : l'enregistrement reprend automatiquement sur le micro par défaut.
 - L'écran est maintenu allumé (Wake Lock) et le navigateur demande confirmation avant de quitter la page.
 - 🤝 Pensez à obtenir l'accord de l'enseignant avant d'enregistrer.
@@ -199,7 +199,7 @@ data/
 uv run pytest
 ```
 
-Structure : `app/main.py` (FastAPI), `app/routes/` (pages et API), `calendar_ics.py`, `recorder.py`, `pipeline.py` (file de tâches), `transcribe.py`, `llm.py`, `markdown_utils.py`, `subjects.py`, `publish/drive.py`, `publish/notion.py`, `templates/` (Jinja2 + HTMX), `static/` (enregistreur JS, rendu Markdown/KaTeX, bibliothèques embarquées pour fonctionner hors ligne).
+Structure : `app/main.py` (FastAPI), `app/routes/` (pages et API), `calendar_ics.py`, `recorder.py`, `pipeline.py` (file de tâches), `transcribe.py`, `llm.py`, `markdown_utils.py`, `subjects.py`, `publish/drive.py`, `publish/notion.py`, `templates/` (Jinja2 + HTMX), `static/` (enregistreur JS, rendu Markdown/KaTeX, bibliothèques et police Plus Jakarta Sans embarquées pour fonctionner hors ligne).
 
 ### Points vérifiés dans la documentation (et par des tests réels)
 

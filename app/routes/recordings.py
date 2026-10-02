@@ -15,7 +15,7 @@ from ..web import redirect, render
 
 router = APIRouter()
 
-CHAINED = {"finalize", "transcribe", "format", "publish"}
+CHAINED = {"transcribe", "format", "publish"}
 ACTIONS = {"finalize", "transcribe", "format", "state", "publish", "publish_drive", "publish_notion", "import_annotations"}
 
 # Avancement affiché en 4 étapes (la mise à jour de l'état de matière est rattachée à « Mise en forme »).
@@ -242,6 +242,10 @@ def run_action(rid: int, action: str = Form(...), notion_mode: str = Form("new_v
         db.update_recording(rid, status="finalizing", ended_at=rec.get("ended_at") or db.now_iso())
     db.update_recording(rid, auto_retry_at=None, auto_retry_count=0)  # relance manuelle : les essais auto repartent de zéro
     pipeline.submit("recording", rid, action, chain=action in CHAINED)
+    if action == "transcribe" and rec["status"] == "uploaded":
+        return redirect(target, "Traitement lancé : transcription, mise en forme puis publication.")
+    if action == "finalize":
+        return redirect(target, "Préparation de l'audio mise en file : lancez ensuite le traitement.")
     return redirect(target, f"Relance mise en file : {STEP_LABELS.get(action, action)}.")
 
 
