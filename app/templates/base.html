@@ -24,6 +24,13 @@
       {% endfor %}
     </nav>
     <div class="worker" hx-get="/fragments/worker" hx-trigger="load, every 4s" hx-swap="innerHTML"></div>
+    <div class="side-foot">
+      <form method="post" action="/quitter"
+            onsubmit="return confirm('Quitter Cours auto ? Un traitement en cours reprendra au prochain lancement.')">
+        <button class="link small">Quitter l'app</button>
+      </form>
+      {% set v = app_version() %}{% if v %}<p class="small muted" title="Dernière mise à jour du code">Version {{ v.commit }} · {{ v.date }}</p>{% endif %}
+    </div>
   </header>
   {% if msg %}
   <div class="toast {{ level }}" role="{{ 'alert' if level == 'err' else 'status' }}" data-toast>

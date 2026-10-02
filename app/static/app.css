@@ -103,6 +103,10 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 1rem 0; }
   background: var(--surface); color: var(--text); font-weight: 600; text-decoration: none;
 }
 .worker a .spinner { color: var(--primary); }
+.side-foot { padding: 0.75rem 0.7rem 0; border-top: 1px solid var(--border); }
+.side-foot .link { color: var(--muted); text-decoration: none; }
+.side-foot .link:hover { color: var(--text); text-decoration: underline; }
+.side-foot p { margin: 0.2rem 0 0; font-size: 0.75rem; }
 @media (max-width: 900px) {
   .topbar {
     position: sticky; inset: auto; top: 0; width: auto; flex-direction: row; flex-wrap: wrap; align-items: center;
@@ -111,6 +115,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 1rem 0; }
   .nav-title { display: none; }
   .topbar nav { flex-direction: row; flex-wrap: wrap; }
   .worker { margin: 0 0 0 auto; }
+  .side-foot { display: none; }
 }
 .spinner {
   display: inline-block; flex: none; width: 0.8em; height: 0.8em; vertical-align: -0.08em;

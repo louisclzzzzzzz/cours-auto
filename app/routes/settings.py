@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import re
+import signal
+import threading
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
@@ -183,3 +186,21 @@ def save_notion(notion_root: str = Form("")):
 def reset_reminder():
     db.set_setting("consent_reminder_dismissed", "0")
     return redirect("/", "Le rappel de consentement sera de nouveau affiché.")
+
+
+QUIT_PAGE = """<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Cours auto arrêté</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="font-family: system-ui, sans-serif; background: #f7f3ec; color: #2a2521; display: grid; place-items: center;
+min-height: 90vh; text-align: center"><div><h1 style="font-size: 1.4rem">Cours auto est arrêté.</h1>
+<p style="color: #7a7066">Vous pouvez fermer cet onglet. Pour le relancer : un clic sur l'icône « Cours auto ».</p></div></body></html>"""
+
+
+def _stop_server() -> None:
+    """Arrêt propre (comme Ctrl+C) : la file de traitement s'arrête, un traitement en cours reprendra au lancement."""
+    os.kill(os.getpid(), signal.SIGINT)
+
+
+@router.post("/quitter", response_class=HTMLResponse)
+def quit_app():
+    threading.Timer(0.5, _stop_server).start()  # laisse le temps d'envoyer la page
+    return HTMLResponse(QUIT_PAGE)

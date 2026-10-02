@@ -39,6 +39,27 @@ Ouvrez <http://127.0.0.1:8000>. (Autre port : `PORT=8001 uv run cours-auto`.)
 
 > Utilisez bien `http://127.0.0.1` ou `http://localhost` : les navigateurs n'autorisent le micro que dans un « contexte sécurisé », ce qui inclut ces adresses locales.
 
+### Application Mac : un clic, toujours à jour
+
+Pour lancer l'app depuis le Dock sans ouvrir de terminal, créez une fois l'application « Cours auto » :
+
+```bash
+bash packaging/macos/install.sh
+```
+
+Elle est créée dans `~/Applications` (le Finder l'affiche) : faites-la glisser dans le Dock. Ensuite, **un clic** :
+
+1. récupère la dernière version de `main` sur GitHub (quelques secondes ; une notification indique les nouveautés) ;
+2. démarre l'app en arrière-plan (le premier lancement installe les dépendances : jusqu'à 2 min) ;
+3. ouvre la page dans votre navigateur. Un nouveau clic quand l'app tourne déjà ouvre simplement la page.
+
+Pour l'arrêter : **« Quitter l'app »**, en bas de la barre latérale (un traitement en cours reprendra au prochain lancement). La version qui tourne est affichée juste en dessous.
+
+- La mise à jour ne suit que `main` (une fusion de pull request) et n'écrase jamais rien : si vous êtes sur une autre branche, hors ligne, ou si un fichier du projet a été modifié à la main, l'app se lance avec la version actuelle et une notification l'explique. Vos données (`data/`, `.env`, `credentials.json`, `token.json`) ne sont jamais touchées.
+- Journal du lanceur et de l'app : `~/Library/Logs/Cours auto/app.log`.
+- Le lanceur lui-même (`packaging/macos/launcher.sh`) se met à jour avec le reste du code ; relancez `install.sh` seulement si vous déplacez le dossier du projet.
+- Si GitHub demande vos identifiants à chaque `git pull` dans le terminal, la mise à jour automatique échouera (elle ne peut pas les saisir) : enregistrez-les une fois, par exemple avec `gh auth login` ou une clé SSH.
+
 ## 3. Mistral
 
 1. Créez une clé sur <https://console.mistral.ai/api-keys> et mettez-la dans `MISTRAL_API_KEY`.
@@ -199,7 +220,7 @@ data/
 uv run pytest
 ```
 
-Structure : `app/main.py` (FastAPI), `app/routes/` (pages et API), `calendar_ics.py`, `recorder.py`, `pipeline.py` (file de tâches), `transcribe.py`, `llm.py`, `markdown_utils.py`, `subjects.py`, `publish/drive.py`, `publish/notion.py`, `templates/` (Jinja2 + HTMX), `static/` (enregistreur JS, rendu Markdown/KaTeX, bibliothèques et police Plus Jakarta Sans embarquées pour fonctionner hors ligne).
+Structure : `packaging/macos/` (lanceur Mac), `app/main.py` (FastAPI), `app/routes/` (pages et API), `calendar_ics.py`, `recorder.py`, `pipeline.py` (file de tâches), `transcribe.py`, `llm.py`, `markdown_utils.py`, `subjects.py`, `publish/drive.py`, `publish/notion.py`, `templates/` (Jinja2 + HTMX), `static/` (enregistreur JS, rendu Markdown/KaTeX, bibliothèques et police Plus Jakarta Sans embarquées pour fonctionner hors ligne).
 
 ### Points vérifiés dans la documentation (et par des tests réels)
 
