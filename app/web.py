@@ -9,7 +9,7 @@ from fastapi import Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from . import config, db
+from . import config, db, version
 from .pipeline import STATUS_LABELS, SUB_LABELS, pipeline
 from .textutils import fmt_duration, fmt_time, fmt_ts, fmt_when, fr_date, fr_short_date
 
@@ -37,7 +37,8 @@ templates.env.filters.update(
     status_label=lambda s: STATUS_LABELS.get(s, s),
     sub_label=lambda s: SUB_LABELS.get(s, s),
 )
-templates.env.globals.update(COURSE_TYPES=config.COURSE_TYPES, pipeline=pipeline, static=static_url)
+templates.env.globals.update(COURSE_TYPES=config.COURSE_TYPES, pipeline=pipeline, static=static_url,
+                             app_version=version.current)
 
 # (lien, libellé, préfixes d'URL qui rendent l'onglet actif)
 NAV = [

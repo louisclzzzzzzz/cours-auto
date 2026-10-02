@@ -193,3 +193,20 @@ def test_fmt_when():
     assert fmt_when("2026-01-05T08:30:00+01:00").endswith("à " + datetime.fromisoformat(
         "2026-01-05T08:30:00+01:00").astimezone().strftime("%H:%M"))
     assert fmt_when("") == "" and fmt_when("pas une date") == "pas une date"
+
+
+def test_quit_button_and_version(client, monkeypatch):
+    from app import version
+    from app.routes import settings as settings_routes
+
+    page = client.get("/").text
+    assert 'action="/quitter"' in page and "Quitter l'app" in page
+    v = version.current()  # tests lancés depuis le dépôt Git
+    assert v and f"Version {v['commit']}" in page
+    stopped = []
+    monkeypatch.setattr(settings_routes, "_stop_server", lambda: stopped.append(True))
+    monkeypatch.setattr(settings_routes.threading, "Timer", lambda delay, fn: type("T", (), {"start": lambda self: fn()})())
+    r = client.post("/quitter")
+    assert r.status_code == 200 and "Cours auto est arrêté" in r.text and stopped == [True]
+    # Comme toute action, l'arrêt est refusé depuis un autre site.
+    assert client.post("/quitter", headers={"Origin": "https://evil.example"}).status_code == 403
