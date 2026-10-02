@@ -48,10 +48,27 @@ NAV = [
 ]
 
 
+def _icon(path: str) -> str:
+    return ('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+            f'stroke-linejoin="round" aria-hidden="true">{path}</svg>')
+
+
+# Icônes de la barre latérale (traits simples, couleur du texte).
+NAV_ICONS = {
+    "mic": _icon('<rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>'),
+    "/": _icon('<rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>'),
+    "/cours": _icon('<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/>'),
+    "/enregistrements": _icon('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+    "/parametres": _icon('<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/>'
+                         '<circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>'),
+}
+
+
 def render(request: Request, name: str, status_code: int = 200, **ctx):
     ctx.setdefault("msg", request.query_params.get("msg"))
     ctx.setdefault("level", request.query_params.get("level", "ok"))
     path = request.url.path
+    ctx["icons"] = NAV_ICONS
     ctx["nav"] = [(href, label, path == href or any(path.startswith(p) for p in prefixes))
                   for href, label, prefixes in NAV]
     return templates.TemplateResponse(request, name, ctx, status_code=status_code)

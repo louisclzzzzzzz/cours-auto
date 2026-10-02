@@ -46,13 +46,15 @@ def test_navigation_and_main_pages(client):
         assert 'href="#main"' in r.text and 'id="main"' in r.text  # lien d'évitement
     # 4 onglets ; les réglages d'une matière sont rattachés à l'onglet « Cours ».
     page = client.get(f"/matieres/{sid}").text
-    assert '<a href="/cours" class="active" aria-current="page">Cours</a>' in page
-    assert ">Historique</a>" in page and ">Matières</a>" not in page
+    assert '<a href="/cours" class="active" aria-current="page"><svg' in page and "</svg>Cours</a>" in page
+    assert "</svg>Historique</a>" in page and "Matières</a>" not in page
     # L'ancienne liste « Matières » renvoie vers « Cours ».
     r = client.get("/matieres", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/cours"
     # Feuilles de style et scripts versionnés (le navigateur recharge les fichiers modifiés).
     assert static_url("app.css") in client.get("/").text and "?v=" in static_url("app.css")
+    # Police embarquée (l'app fonctionne hors ligne).
+    assert client.get("/static/vendor/fonts/plus-jakarta-sans-latin-wght-normal.woff2").status_code == 200
 
 
 def test_home_without_course_today_offers_next_day_and_manual_choice(client, ics_bytes):

@@ -199,7 +199,7 @@ data/
 uv run pytest
 ```
 
-Structure : `app/main.py` (FastAPI), `app/routes/` (pages et API), `calendar_ics.py`, `recorder.py`, `pipeline.py` (file de tâches), `transcribe.py`, `llm.py`, `markdown_utils.py`, `subjects.py`, `publish/drive.py`, `publish/notion.py`, `templates/` (Jinja2 + HTMX), `static/` (enregistreur JS, rendu Markdown/KaTeX, bibliothèques embarquées pour fonctionner hors ligne).
+Structure : `app/main.py` (FastAPI), `app/routes/` (pages et API), `calendar_ics.py`, `recorder.py`, `pipeline.py` (file de tâches), `transcribe.py`, `llm.py`, `markdown_utils.py`, `subjects.py`, `publish/drive.py`, `publish/notion.py`, `templates/` (Jinja2 + HTMX), `static/` (enregistreur JS, rendu Markdown/KaTeX, bibliothèques et police Plus Jakarta Sans embarquées pour fonctionner hors ligne).
 
 ### Points vérifiés dans la documentation (et par des tests réels)
 
