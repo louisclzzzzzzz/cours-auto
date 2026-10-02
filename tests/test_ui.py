@@ -146,6 +146,30 @@ def test_detail_page_retry_button_and_polling(client):
     assert "every 4s" not in client.get("/fragments/latest").text
 
 
+def test_audio_ready_waits_for_manual_launch(client, monkeypatch):
+    sid = subjects.create_subject("Graphes")
+    rid = recorder.create_recording(subject_id=sid, course_type="CM", session_date="2026-09-21")
+    recorder.audio_path(rid).write_bytes(b"mp3")
+    db.update_recording(rid, status="uploaded", duration_seconds=3600)
+    # Rien ne tourne tout seul : un bouton lance le traitement (accueil, Historique, fiche), sans rechargement auto.
+    for url in ("/", "/enregistrements", f"/enregistrements/{rid}"):
+        assert "Lancer le traitement" in client.get(url).text, url
+    assert "Prêt à traiter" in client.get("/fragments/latest").text
+    assert "every 4s" not in client.get("/fragments/latest").text
+    assert 'hx-trigger="every 3s"' not in client.get(f"/enregistrements/{rid}").text
+
+    submitted = []
+    monkeypatch.setattr(pl.pipeline, "submit", lambda kind, target, action, chain=True: submitted.append((action, chain)))
+    r = client.post(f"/enregistrements/{rid}/action", data={"action": "transcribe", "back": "/"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/?msg=Traitement+lanc")
+    assert submitted == [("transcribe", True)]  # transcription → mise en forme → publication
+
+    # En file derrière un autre traitement : plus de bouton, badge « En file d'attente », suivi en direct.
+    monkeypatch.setattr(pl.pipeline, "is_active", lambda r: r == rid)
+    latest = client.get("/fragments/latest").text
+    assert "En file d&#39;attente" in latest and "Lancer le traitement" not in latest and "every 4s" in latest
+
+
 def test_worker_indicator_is_empty_when_idle(client):
     assert client.get("/fragments/worker").text.strip() == ""
 

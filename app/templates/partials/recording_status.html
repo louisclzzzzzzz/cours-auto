@@ -31,7 +31,16 @@
         <p class="small">L'audio déjà reçu est conservé. Vous pouvez le reprendre depuis la page <a href="/">Enregistrer</a>, ou le terminer tel quel.</p></div>
       <form method="post" action="/enregistrements/{{ rec.id }}/action" class="inline-form">
         <input type="hidden" name="action" value="finalize">
-        <button class="primary">Terminer et traiter</button>
+        <button class="primary">Terminer</button>
+      </form>
+    </div>
+  {% elif rec.status == 'uploaded' %}
+    <div class="alert info">
+      <div><p class="alert-title">Audio prêt : traitement à lancer</p>
+        <p class="small">Écoutez l'audio ou ajoutez le support de cours si besoin, puis lancez la transcription, la mise en forme et la publication.</p></div>
+      <form method="post" action="/enregistrements/{{ rec.id }}/action" class="inline-form">
+        <input type="hidden" name="action" value="transcribe">
+        <button class="primary"><span aria-hidden="true">▶</span> Lancer le traitement</button>
       </form>
     </div>
   {% elif rec.status == 'error' %}

@@ -177,6 +177,7 @@ h2 > span[aria-hidden="true"]:first-child { margin-right: 0.35rem; }
 .alert p { margin: 0.15rem 0; }
 .alert.warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
 .alert.danger { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+.alert.info { background: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 40%, transparent); }
 .alert .alert-title { font-weight: 700; }
 
 /* --- Formulaires --- */
@@ -313,6 +314,8 @@ table.list th {
   font-size: 0.78rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
 }
 table.list .row-title { display: inline-block; }
+table.list .launch { margin-top: 0.4rem; }
+table.list .launch:empty { display: none; }
 
 /* --- Accueil : choix du cours --- */
 .record-layout { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1.1fr) minmax(320px, 1fr); align-items: start; }

@@ -95,6 +95,17 @@ def wait_status(rid: int, done: set[str], timeout: float = 30.0) -> dict:
     raise AssertionError(f"statut final non atteint : {db.get_recording(rid)['status']}")
 
 
+def wait_audio_ready(rid: int, timeout: float = 30.0) -> dict:
+    """Audio préparé et file libérée : l'enregistrement attend que l'utilisateur lance le traitement."""
+    from app.pipeline import pipeline
+
+    wait_status(rid, {"uploaded", "error"}, timeout)
+    t0 = time.time()
+    while pipeline.is_active(rid) and time.time() - t0 < timeout:
+        time.sleep(0.05)
+    return db.get_recording(rid)
+
+
 def test_api_recording_survives_reload(tmp_path):
     """Critère de la phase 3 : un enregistrement survit à un rechargement de page en plein milieu."""
     from app.main import app
@@ -122,7 +133,14 @@ def test_api_recording_survives_reload(tmp_path):
             seq += 1
         assert client.post(f"/api/recordings/{rid}/heartbeat", json={"state": "paused", "elapsed": 20}).status_code == 200
         assert client.post(f"/api/recordings/{rid}/stop", json={"elapsed": 20.0}).json()["status"] == "finalizing"
-        # Finalisation OK puis la transcription échoue proprement (pas de clé API dans les tests).
+        # Finalisation OK, puis le traitement attend d'être lancé à la main.
+        rec = wait_audio_ready(rid)
+        assert rec["status"] == "uploaded", rec["error_message"]
+        assert not (recorder.recording_dir(rid) / "transcript.json").exists()
+        assert "Lancer le traitement" in client.get("/").text
+        r = client.post(f"/enregistrements/{rid}/action", data={"action": "transcribe", "back": "/"}, follow_redirects=False)
+        assert r.status_code == 303 and r.headers["location"].startswith("/?msg=Traitement+lanc")
+        # La transcription échoue proprement (pas de clé API dans les tests).
         rec = wait_status(rid, {"error", "done"})
         assert rec["error_step"] == "transcription"
         assert "MISTRAL_API_KEY" in rec["error_message"]
@@ -151,11 +169,11 @@ def test_api_import_audio_file(tmp_path):
         assert r.status_code == 200, r.text
         rid = r.json()["id"]
         assert 9 < r.json()["duration"] < 11
-        rec = wait_status(rid, {"error", "done"})
+        rec = wait_audio_ready(rid)
         assert rec["origin"] == "import" and rec["source_filename"] == "cours du lundi.m4a"
         assert rec["course_type"] == "TD" and rec["session_date"] == "2026-09-22"
         assert rec["event_summary"] == "Réseaux TD G1"
-        assert rec["error_step"] == "transcription"  # conversion OK, pas de clé API dans les tests
+        assert rec["status"] == "uploaded", rec["error_message"]  # conversion OK, traitement à lancer à la main
         assert 9 < rec["duration_seconds"] < 11
         assert recorder.source_path(rid).name == "source.m4a"
         assert recorder.audio_path(rid).exists()

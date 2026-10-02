@@ -225,8 +225,8 @@ async def api_import(
     event: str = Form(""),
     support: list[UploadFile] = File(default=[]),
 ):
-    """Import d'un fichier audio (téléphone, dictaphone…) : traité comme un enregistrement.
-    `support` : diapositives / PDF du cours, joints avant le début du traitement."""
+    """Import d'un fichier audio (téléphone, dictaphone…) : converti comme un enregistrement, puis en attente
+    du lancement du traitement. `support` : diapositives / PDF du cours, joints avant le traitement."""
     sid = int(subject_id) if subject_id.strip().isdigit() else None
     if not sid and subject_name.strip():
         sid = subjects.create_subject(subject_name)
@@ -328,6 +328,6 @@ def api_stop(rid: int, payload: StopIn | None = None):
                             error_message="Aucun morceau audio n'a été reçu.", client_state="stopped")
         return {"ok": False, "status": "error"}
     db.update_recording(rid, **fields)
-    db.log(rid, "Arrêt demandé : finalisation et traitement mis en file.")
+    db.log(rid, "Arrêt demandé : finalisation de l'audio mise en file (traitement à lancer ensuite).")
     pipeline.submit("recording", rid, "finalize")
     return {"ok": True, "status": "finalizing"}

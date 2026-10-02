@@ -1,11 +1,23 @@
 {% macro status_badge(rec) -%}
 {%- set s = rec.status -%}
+{%- set queued = s == 'uploaded' and pipeline.is_active(rec.id) -%}
 {%- set cls = 'ok' if s == 'done' else 'err' if s == 'error' else 'warn' if s == 'interrupted'
-    else 'busy' if s in ('recording', 'finalizing', 'transcribing', 'formatting', 'publishing') else '' -%}
+    else 'busy' if queued or s in ('recording', 'finalizing', 'transcribing', 'formatting', 'publishing') else '' -%}
 <span class="badge {{ cls }}" {% if s == 'error' and rec.error_message %}title="{{ rec.error_message }}"{% endif %}>
   {%- if cls == 'busy' %}<span class="spinner" aria-hidden="true"></span>{% endif -%}
-  {{- s|status_label -}}{% if s == 'error' and rec.error_step %} · {{ rec.error_step }}{% endif -%}
+  {{- "En file d'attente" if queued else s|status_label -}}{% if s == 'error' and rec.error_step %} · {{ rec.error_step }}{% endif -%}
 </span>
+{%- endmacro %}
+
+{# Le traitement (transcription → mise en forme → publication) n'est jamais lancé automatiquement :
+   bouton affiché tant que l'audio est prêt et que rien n'est en file pour cet enregistrement. #}
+{% macro launch_button(rec, back) -%}
+{%- if rec.status == 'uploaded' and not pipeline.is_active(rec.id) -%}
+<form method="post" action="/enregistrements/{{ rec.id }}/action" class="inline-form">
+  <input type="hidden" name="action" value="transcribe"><input type="hidden" name="back" value="{{ back }}">
+  <button class="primary small"><span aria-hidden="true">▶</span> Lancer le traitement</button>
+</form>
+{%- endif -%}
 {%- endmacro %}
 
 {% macro session_name(rec) -%}

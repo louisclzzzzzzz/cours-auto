@@ -19,12 +19,12 @@
     {% if a.status == 'recording' and a.idle_seconds is not none and a.idle_seconds < 60 %}
     <p class="small muted">Il continue peut-être dans un autre onglet : dans ce cas, poursuivez-le là-bas.</p>
     {% else %}
-    <p class="small muted">L'audio déjà reçu est conservé : reprenez l'enregistrement ou terminez-le pour lancer le traitement.</p>
+    <p class="small muted">L'audio déjà reçu est conservé : reprenez l'enregistrement ou terminez-le tel quel.</p>
     {% endif %}
   </div>
   <div class="actions">
     <button class="primary" data-resume="{{ a.id }}">Reprendre</button>
-    <button data-finalize="{{ a.id }}">Terminer et traiter</button>
+    <button data-finalize="{{ a.id }}">Terminer</button>
   </div>
 </div>
 {% endfor %}
