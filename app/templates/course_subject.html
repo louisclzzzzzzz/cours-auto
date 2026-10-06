@@ -10,31 +10,22 @@
   </div>
   <div class="actions">
     {% if sessions %}<a class="btn" href="/cours/{{ subject.id }}/complet">Cours complet</a>{% endif %}
+    <form method="post" action="/cours/drive" class="inline-form">
+      <input type="hidden" name="subject_id" value="{{ subject.id }}"><input type="hidden" name="back" value="/cours/{{ subject.id }}">
+      <button>Récupérer depuis Drive</button>
+    </form>
     <a class="btn" href="/matieres/{{ subject.id }}">Réglages</a>
+    {% if subject.drive_folder_url %}
     {% call menu() %}
-      {% if subject.notion_page_url %}<a class="menu-item ext" href="{{ subject.notion_page_url }}" target="_blank" rel="noopener">Page Notion de la matière</a>{% endif %}
       {% if subject.drive_gdoc_url %}<a class="menu-item ext" href="{{ subject.drive_gdoc_url }}" target="_blank" rel="noopener">Google Doc pour NotebookLM</a>{% endif %}
       {% if subject.drive_full_url %}<a class="menu-item ext" href="{{ subject.drive_full_url }}" target="_blank" rel="noopener">Cours complet sur Drive</a>{% endif %}
-      {% if subject.drive_folder_url %}<a class="menu-item ext" href="{{ subject.drive_folder_url }}" target="_blank" rel="noopener">Dossier Drive</a>{% endif %}
-      {% if subject.notion_page_url or subject.drive_folder_url %}<hr>{% endif %}
-      <form method="post" action="/cours/{{ subject.id }}/annotations"
-            onsubmit="return confirm('Importer vos annotations Notion pour toutes les séances de cette matière ?')">
-        <button class="menu-item">Importer mes annotations Notion (toutes les séances)</button>
-      </form>
-      {% if not drive_automation %}
-      <form method="post" action="/cours/{{ subject.id }}/drive">
-        <button class="menu-item">Régénérer le cours complet et le Google Doc sur Drive</button>
-      </form>
-      {% endif %}
+      <a class="menu-item ext" href="{{ subject.drive_folder_url }}" target="_blank" rel="noopener">Dossier Drive</a>
     {% endcall %}
+    {% endif %}
   </div>
 </div>
 
-{% if n_proposed %}
-<p class="notice">{{ n_proposed }} terme{{ 's' if n_proposed > 1 }} repéré{{ 's' if n_proposed > 1 }} dans vos cours
-  pourrai{{ 'en' if n_proposed > 1 }}t améliorer la transcription.
-  <a href="/matieres/{{ subject.id }}#propositions">Les passer en revue</a></p>
-{% endif %}
+{% include "partials/sync_info.html" %}
 
 {% if sessions or others %}
 <div class="reader">
@@ -48,14 +39,14 @@
         <a href="/cours/{{ subject.id }}?seance={{ r.id }}" data-session-link {% if is_sel %}class="active" aria-current="true"{% endif %}
            hx-get="/fragments/cours/seance/{{ r.id }}" hx-target="#preview" hx-push-url="/cours/{{ subject.id }}?seance={{ r.id }}">
           <span class="title">{{ session_name(r) }}</span>
-          <span class="small muted">{{ r.session_date|fr_short_date }}{% if r.annotated %} · annotée{% endif %}</span>
+          <span class="small muted">{{ r.session_date|fr_short_date }}</span>
         </a>
       </li>
       {% endfor %}
     </ul>
     {% endif %}
     {% if others %}
-    <h3>Pas encore prêtes</h3>
+    <h3>Cours pas encore rédigés</h3>
     <ul class="session-list">
       {% for r in others %}
       <li><a href="/enregistrements/{{ r.id }}"><span class="title">{{ session_name(r) }}</span>{{ status_badge(r) }}</a></li>
@@ -68,7 +59,7 @@
     {% if selected %}
       {% with rec=selected %}{% include "partials/session_preview_loader.html" %}{% endwith %}
     {% else %}
-      <p class="muted">Les séances apparaîtront ici une fois leur traitement terminé.</p>
+      <p class="muted">Les cours apparaîtront ici dès que la tâche Claude les aura rédigés dans Drive.</p>
     {% endif %}
   </section>
 </div>

@@ -15,15 +15,14 @@ from ..web import redirect, render
 
 router = APIRouter()
 
-CHAINED = {"transcribe", "format", "publish"}
-ACTIONS = {"finalize", "transcribe", "format", "state", "publish", "publish_drive", "publish_notion", "import_annotations"}
+CHAINED = {"transcribe", "publish"}
+ACTIONS = {"finalize", "transcribe", "publish"}
 
-# Avancement affiché en 4 étapes (la mise à jour de l'état de matière est rattachée à « Mise en forme »).
-STEPS = ["Audio", "Transcription", "Mise en forme", "Publication"]
-RUNNING_STEP = {"recording": 0, "finalizing": 0, "transcribing": 1, "formatting": 2, "publishing": 3}
-FAILED_STEP = {"finalisation audio": 0, "transcription": 1, "mise en forme": 2,
-               "publication": 3, "publication Drive": 3, "publication Notion": 3}
-RETRY_ACTION = {v: k for k, v in STEP_LABELS.items() if k != "publish"}  # libellé d'étape en échec → action
+# Avancement affiché en 4 étapes : la dernière (le cours) est faite par la tâche Claude, puis récupérée de Drive.
+STEPS = ["Audio", "Transcription", "Dépôt Drive", "Cours (Claude)"]
+RUNNING_STEP = {"recording": 0, "finalizing": 0, "transcribing": 1, "publishing": 2}
+FAILED_STEP = {"finalisation audio": 0, "transcription": 1, "publication": 2}
+RETRY_ACTION = {v: k for k, v in STEP_LABELS.items()}  # libellé d'étape en échec → action
 
 
 def _get(rid: int) -> dict:
@@ -41,7 +40,6 @@ def _files(rid: int) -> dict:
         "audio": recorder.audio_path(rid).exists(),
         "transcript": (folder / "transcript.txt").exists(),
         "course": subjects.course_path(rid).exists(),
-        "annotated": subjects.annotated_path(rid).exists(),
         "chunks": db.chunk_stats(rid),
     }
 
@@ -57,8 +55,7 @@ def progress_steps(rec: dict, files: dict) -> list[dict]:
     status = rec["status"]
     running = RUNNING_STEP.get(status)
     failed = FAILED_STEP.get(rec.get("error_step") or "") if status == "error" else None
-    published = files["course"] and all(rec[f"{k}_status"] in ("done", "skipped") for k in ("drive", "notion"))
-    done = [files["audio"], files["transcript"], files["course"], published]
+    done = [files["audio"], files["transcript"], rec["drive_status"] == "done", files["course"]]
     steps = []
     for i, label in enumerate(STEPS):
         if running is not None:
@@ -72,6 +69,8 @@ def progress_steps(rec: dict, files: dict) -> list[dict]:
         steps[0]["state"] = "warn"
     if files["audio"] and rec.get("duration_seconds"):
         steps[0]["detail"] = fmt_duration(rec["duration_seconds"])
+    if steps[2]["state"] == "done" and steps[3]["state"] == "todo":
+        steps[3]["detail"] = "en attente de la tâche Claude"
     return steps
 
 
@@ -81,11 +80,7 @@ def retry_action(rec: dict) -> str | None:
         return "finalize"
     if rec["status"] != "error":
         return None
-    step = rec.get("error_step") or ""
-    if step == "publication":
-        failed = [k for k in ("drive", "notion") if rec[f"{k}_status"] == "error"]
-        return f"publish_{failed[0]}" if len(failed) == 1 else "publish"
-    return RETRY_ACTION.get(step)
+    return RETRY_ACTION.get(rec.get("error_step") or "")
 
 
 def status_context(rec: dict) -> dict:
@@ -99,18 +94,11 @@ def status_context(rec: dict) -> dict:
         "running_detail": pipeline.describe() if current else "",
         "steps": progress_steps(rec, files),
         "retry": retry_action(rec),
-        "targets": [
-            {"name": "Drive", "status": rec["drive_status"], "url": rec.get("drive_md_url") or rec.get("drive_transcription_url"),
-             "error": rec.get("drive_error")},
-            {"name": "Notion", "status": rec["notion_status"], "url": rec.get("notion_page_url"), "error": rec.get("notion_error")},
-        ],
     }
 
 
 def supports_context(rid: int) -> dict:
-    info = supports.summary(rid)
-    return {"supports": info["supports"], "supports_reading": info["reading"], "supports_unused": info["unused"],
-            "support_accept": supports.ACCEPT}
+    return {"supports": db.list_supports(rid), "support_accept": supports.ACCEPT}
 
 
 def _support_or_404(rid: int, sid: int) -> dict:
@@ -163,7 +151,7 @@ async def add_supports(rid: int, files: list[UploadFile] = File(...)):
     if not added:
         return redirect(target, " ".join(errors) or "Aucun fichier reçu.", "err")
     drive.deposit_in_background(rid)
-    message = ("Support ajouté" if len(added) == 1 else f"{len(added)} supports ajoutés") + " : lecture en cours."
+    message = "Support ajouté." if len(added) == 1 else f"{len(added)} supports ajoutés."
     return redirect(target, " ".join([message, *errors]), "warn" if errors else "ok")
 
 
@@ -171,25 +159,6 @@ async def add_supports(rid: int, files: list[UploadFile] = File(...)):
 def support_file(rid: int, sid: int):
     sup = _support_or_404(rid, sid)
     return FileResponse(supports.file_path(sup), filename=sup["filename"], content_disposition_type="inline")
-
-
-@router.get("/enregistrements/{rid}/supports/{sid}/texte")
-def support_text(rid: int, sid: int):
-    path = supports.text_path(_support_or_404(rid, sid))
-    if not path.exists():
-        raise HTTPException(404, "Le texte de ce support n'a pas encore été lu.")
-    return PlainTextResponse(path.read_text(encoding="utf-8"))
-
-
-@router.post("/enregistrements/{rid}/supports/{sid}/relire")
-def reread_support(rid: int, sid: int):
-    sup = _support_or_404(rid, sid)
-    if sup["status"] in ("pending", "extracting"):
-        return redirect(f"/enregistrements/{rid}#supports", "La lecture de ce support est déjà en cours.")
-    supports.text_path(sup).unlink(missing_ok=True)
-    db.update_support(sid, status="pending", error=None)
-    supports.extract_in_background(sid)
-    return redirect(f"/enregistrements/{rid}#supports", "Nouvelle lecture du support lancée.")
 
 
 @router.post("/enregistrements/{rid}/supports/{sid}/delete")
@@ -216,16 +185,15 @@ def transcript_file(rid: int):
 
 
 @router.get("/enregistrements/{rid}/cours.md")
-def course_file(rid: int, annote: bool = False):
-    md = subjects.read_course(rid, prefer_annotated=annote)
+def course_file(rid: int):
+    md = subjects.read_course(rid)
     if md is None:
         raise HTTPException(404, "Cours absent.")
     return PlainTextResponse(md, media_type="text/markdown; charset=utf-8")
 
 
 @router.post("/enregistrements/{rid}/action")
-def run_action(rid: int, action: str = Form(...), notion_mode: str = Form("new_version"),
-               back: str = Form("")):
+def run_action(rid: int, action: str = Form(...), back: str = Form("")):
     rec = _get(rid)
     target = back if back.startswith("/") else f"/enregistrements/{rid}"
     if action not in ACTIONS:
@@ -236,14 +204,12 @@ def run_action(rid: int, action: str = Form(...), notion_mode: str = Form("new_v
         return redirect(target, "Enregistrement en cours : arrêtez-le ou finalisez-le d'abord.", "err")
     if action == "finalize" and rec["status"] == "recording" and rec.get("client_state") != "stopped":
         db.log(rid, "Finalisation forcée d'un enregistrement encore marqué actif.", "warning")
-    if action == "format" and rec.get("notion_page_id"):
-        db.update_recording(rid, notion_pending_action="overwrite" if notion_mode == "overwrite" else "new_version")
     if action == "finalize":
         db.update_recording(rid, status="finalizing", ended_at=rec.get("ended_at") or db.now_iso())
     db.update_recording(rid, auto_retry_at=None, auto_retry_count=0)  # relance manuelle : les essais auto repartent de zéro
     pipeline.submit("recording", rid, action, chain=action in CHAINED)
     if action == "transcribe" and rec["status"] == "uploaded":
-        return redirect(target, "Traitement lancé : transcription, mise en forme puis publication.")
+        return redirect(target, "Traitement lancé : transcription puis dépôt dans Drive.")
     if action == "finalize":
         return redirect(target, "Préparation de l'audio mise en file : lancez ensuite le traitement.")
     return redirect(target, f"Relance mise en file : {STEP_LABELS.get(action, action)}.")
@@ -274,33 +240,64 @@ def update_metadata(
         teacher=teacher.strip(),
         title=title.strip() or rec.get("title"),
     )
-    _refresh_course_header(rid, rec)
+    _refresh_headers(rid, rec)
     recorder.write_meta(rid)
-    return redirect(f"/enregistrements/{rid}", "Informations mises à jour. Republiez pour mettre à jour Drive/Notion.")
+    return redirect(f"/enregistrements/{rid}", "Informations mises à jour." + (
+        " Relancez le dépôt Drive pour renommer la transcription dans Drive." if rec.get("drive_transcription_id") else ""))
 
 
-def _refresh_course_header(rid: int, before: dict) -> None:
-    """Répercute type/numéro/titre dans le titre du cours, sans déclencher de nouvelle version Notion."""
+def _refresh_headers(rid: int, before: dict) -> None:
+    """Répercute type/numéro/titre dans l'en-tête du cours et de la transcription."""
     rec = db.get_recording(rid)
+    old_num = f" — {before['course_type']} {before['session_number']} "
+    new_num = f" — {rec['course_type']} {rec['session_number']} "
+    transcript = recorder.recording_dir(rid) / "transcript.txt"
+    if transcript.exists():  # « # Transcription — Matière — CM 3 — 2026-10-05 »
+        title, sep, rest = transcript.read_text(encoding="utf-8").partition("\n")
+        if old_num in title:
+            transcript.write_text(title.replace(old_num, new_num, 1) + sep + rest, encoding="utf-8")
     md = subjects.read_course(rid)
     if md is None or not rec.get("title"):
         return
-    old_hash = subjects.content_hash(md)
     new_md = replace_title(md, f"{rec['course_type']} {rec['session_number']} – {rec['title']}")
+    new_md = new_md.replace(old_num + "du ", new_num + "du ", 1)  # « *Matière — CM 3 du 5 octobre 2026 — … » sous le titre
     if new_md != md:
         subjects.course_path(rid).write_text(new_md, encoding="utf-8")
-        if before.get("notion_content_hash") == old_hash:
-            db.update_recording(rid, notion_content_hash=subjects.content_hash(new_md))
+
+
+def _deposited(rec: dict) -> bool:
+    return bool(rec.get("drive_transcription_id") or rec.get("drive_md_id"))
 
 
 @router.post("/enregistrements/{rid}/delete")
-def delete(rid: int):
+def delete(rid: int, back: str = Form("")):
     rec = _get(rid)
+    here = back if back.startswith("/") else f"/enregistrements/{rid}"
     if pipeline.is_active(rid) or rec["status"] in BUSY_STATUSES:
-        return redirect(f"/enregistrements/{rid}", "Impossible de supprimer pendant un traitement.", "err")
+        return redirect(here, "Impossible de supprimer pendant un traitement.", "err")
+    # Les séances suivantes reculent d'un cran (ex. faux départ supprimé : le vrai CM 3 redevient CM 2).
+    later = db.sessions_to_renumber(rec)
+    busy = next((r for r in later if pipeline.is_active(r["id"]) or r["status"] in BUSY_STATUSES), None)
+    if busy:
+        return redirect(here, f"Suppression impossible pendant le traitement du {busy['course_type']} "
+                              f"{busy['session_number']} (son numéro doit changer) : réessayez une fois terminé.", "err")
+    subject = db.get_subject(rec["subject_id"]) if rec.get("subject_id") else None
     recorder.delete_files(rid)
     db.delete_recording(rid)
-    if rec.get("subject_id") and db.get_subject(rec["subject_id"]):
-        subjects.build_full_course(db.get_subject(rec["subject_id"]))
-    return redirect("/enregistrements", "Enregistrement supprimé (fichiers locaux). Les pages Notion / fichiers Drive "
-                                        "déjà publiés ne sont pas supprimés.")
+    for r in later:
+        db.update_recording(r["id"], session_number=r["session_number"] - 1)
+        _refresh_headers(r["id"], r)
+        recorder.write_meta(r["id"])
+    if subject:
+        subjects.build_full_course(db.get_subject(subject["id"]))
+
+    msg = [f"{rec.get('subject_name') or 'Séance'} — {rec['course_type']} {rec['session_number']} supprimé."]
+    if later:
+        msg.append("Numéros mis à jour : " + ", ".join(
+            f"{r['course_type']} {r['session_number']} → {r['course_type']} {r['session_number'] - 1}" for r in later) + ".")
+        deposited = [f"{r['course_type']} {r['session_number'] - 1}" for r in later if r.get("drive_transcription_id")]
+        if deposited:
+            msg.append(f"Relancez le dépôt Drive de {', '.join(deposited)} pour renommer sa transcription dans Drive.")
+    if _deposited(rec):
+        msg.append("Ses fichiers déjà déposés dans Drive ne sont pas supprimés.")
+    return redirect(back if back.startswith("/") else "/enregistrements", " ".join(msg))

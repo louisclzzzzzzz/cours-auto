@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% from "macros.html" import markdown %}
 {% block title %}Réglages · {{ subject.name }}{% endblock %}
 {% block content %}
 <div class="narrow">
@@ -10,28 +9,6 @@
     <p class="muted">{{ subject.name }} · {% for t in COURSE_TYPES %}{{ t }} {{ counts.get(t, 0) }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
   </div>
 </div>
-
-{% if proposed %}
-<section class="card" id="propositions" aria-labelledby="prop-title">
-  <div class="card-head">
-    <h2 id="prop-title">Termes proposés</h2>
-    <span class="badge warn">{{ proposed|length }} à valider</span>
-  </div>
-  <p class="small muted">Repérés dans vos derniers cours. Cochez ceux à ajouter au vocabulaire : les autres seront écartés.</p>
-  <form method="post" action="/matieres/{{ subject.id }}/propositions">
-    <fieldset class="bare">
-      <legend class="visually-hidden">Termes à ajouter au vocabulaire</legend>
-      <div class="check-grid">
-        {% for t in proposed %}<label class="check"><input type="checkbox" name="accepted" value="{{ t }}" checked> {{ t }}</label>{% endfor %}
-      </div>
-    </fieldset>
-    <div class="actions">
-      <button class="primary" name="decision" value="accept">Valider</button>
-      <button class="link" name="decision" value="reject_all">Tout écarter</button>
-    </div>
-  </form>
-</section>
-{% endif %}
 
 <section class="card" id="vocabulaire" aria-labelledby="vocab-title">
   <div class="card-head">
@@ -83,25 +60,6 @@
   </section>
 </div>
 
-<details class="card disclosure" id="memoire">
-  <summary>Mémoire de la matière <span class="muted small">(avancé)</span></summary>
-  <p class="small muted">Résumé tenu à jour après chaque séance (plan, notions, notations) et transmis au LLM pour la suivante.
-    Vous pouvez le corriger ; restez sous ~3 000 tokens.</p>
-  <div class="grid">
-    <form method="post" action="/matieres/{{ subject.id }}/etat">
-      <label for="state-editor" class="visually-hidden">État de la matière (Markdown)</label>
-      <textarea name="state" rows="22" id="state-editor">{{ state }}</textarea>
-      <div class="row" style="margin-top:0.5rem">
-        <button>Enregistrer</button>
-        <span class="small muted" id="state-size"></span>
-      </div>
-    </form>
-    <div>
-      {% if state %}{{ markdown(state, 'state-preview') }}{% else %}<p class="muted">Vide : il sera créé après la première séance mise en forme.</p>{% endif %}
-    </div>
-  </div>
-</details>
-
 <div class="danger-zone">
   {% if n_recordings %}
     <p class="small muted">Cette matière a {{ n_recordings }} enregistrement{{ 's' if n_recordings > 1 }} : supprimez-les ou réaffectez-les pour pouvoir la supprimer.</p>
@@ -112,21 +70,4 @@
   {% endif %}
 </div>
 </div>
-{% endblock %}
-
-{% block scripts %}
-<script>
-  (() => {
-    const ed = document.getElementById("state-editor");
-    const size = document.getElementById("state-size");
-    const src = document.getElementById("state-preview-src");
-    const update = () => {
-      const words = ed.value.trim() ? ed.value.trim().split(/\s+/).length : 0;
-      size.textContent = `${words} mots (≈ ${Math.round(ed.value.length / 4)} tokens)`;
-      if (src) { src.value = ed.value; window.renderAllMarkdown && window.renderAllMarkdown(src.parentElement); }
-    };
-    ed.addEventListener("input", update);
-    document.addEventListener("DOMContentLoaded", update);
-  })();
-</script>
 {% endblock %}

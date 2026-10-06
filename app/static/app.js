@@ -68,7 +68,7 @@
     });
   }
 
-  // --- Ancre vers une section repliée (#intitules, #propositions…) : on l'ouvre.
+  // --- Ancre vers une section repliée (#intitules, #avance…) : on l'ouvre.
   function openTarget() {
     if (!location.hash) return;
     const el = document.getElementById(decodeURIComponent(location.hash.slice(1)));

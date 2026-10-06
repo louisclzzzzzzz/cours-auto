@@ -1,12 +1,11 @@
 """Mistral momentanément indisponible (5xx, 429, réseau) : l'étape est reprogrammée et relancée toute seule."""
 
-import json
 from datetime import datetime, timedelta
 
 import httpx
 import pytest
 
-from app import db, llm, pipeline as pl, recorder, subjects, transcribe
+from app import db, pipeline as pl, recorder, subjects, transcribe
 
 
 class ApiError(Exception):
@@ -86,9 +85,10 @@ def test_due_retry_checks_mistral_before_sending_the_audio_again(mistral):
 
 def test_delays_and_messages():
     assert [pl.auto_retry_delay(n).seconds // 60 for n in (1, 2, 3, 4, 5, 20)] == [5, 10, 20, 40, 60, 60]
-    assert pl.unavailable_message("format", ApiError(502)) == "Le service de Mistral est momentanément indisponible (erreur 502)."
-    assert pl.unavailable_message("format", ApiError(429)).startswith("Mistral limite temporairement")
-    assert pl.unavailable_message("transcribe", httpx.ConnectError("x")).startswith("Connexion à Mistral impossible")
+    assert pl.unavailable_message(ApiError(502)) == (
+        "Le service de transcription de Mistral est momentanément indisponible (erreur 502).")
+    assert pl.unavailable_message(ApiError(429)).startswith("Mistral limite temporairement")
+    assert pl.unavailable_message(httpx.ConnectError("x")).startswith("Connexion à Mistral impossible")
 
 
 def test_other_errors_wait_for_the_user(monkeypatch):
@@ -100,19 +100,16 @@ def test_other_errors_wait_for_the_user(monkeypatch):
     assert rec["auto_retry_at"] is None and rec["auto_retry_count"] == 0
 
 
-def test_format_step_and_giving_up(monkeypatch):
+def test_rate_limit_and_giving_up(monkeypatch):
     rid = uploaded_rec()
-    (recorder.recording_dir(rid) / "transcript.json").write_text(json.dumps(
-        {"segments": [{"text": "Bonjour.", "start": 0, "end": 2, "speaker_id": "s1"}]}))
-    db.update_recording(rid, status="transcribed")
-    monkeypatch.setattr(llm, "format_course", lambda *a, **k: (_ for _ in ()).throw(ApiError(429)))
+    monkeypatch.setattr(transcribe, "transcribe_file", lambda *a, **k: (_ for _ in ()).throw(ApiError(429)))
     p = pl.Pipeline()
-    p._exec_step(rid, "format")
+    p._exec_step(rid, "transcribe")
     rec = db.get_recording(rid)
-    assert rec["error_step"] == "mise en forme" and rec["auto_retry_count"] == 1
+    assert rec["error_step"] == "transcription" and rec["auto_retry_count"] == 1
     assert rec["error_message"].startswith("Mistral limite temporairement les requêtes (erreur 429). Nouvel essai")
     db.update_recording(rid, auto_retry_count=pl.AUTO_RETRY_MAX)
-    p._exec_step(rid, "format")
+    p._exec_step(rid, "transcribe")
     rec = db.get_recording(rid)
     assert rec["auto_retry_at"] is None and "Les essais automatiques sont arrêtés" in rec["error_message"]
 

@@ -6,19 +6,19 @@
 <span class="badge {{ level }}">{{ '✓' if level == 'ok' else '!' }} {{ text }}</span>
 {%- endmacro %}
 {%- set edt = ('ok', 'À jour') if has_calendar and not ics_error else ('warn', 'Mise à jour en échec') if has_calendar else ('err', 'À configurer') -%}
-{%- set gd = ('ok', drive_status.message) if drive_status.connected else ('warn', 'Non connecté') if drive_status.configured else ('err', 'Non configuré') -%}
-{%- set nt = ('ok', 'Configuré') if notion_token and notion_root_id else ('warn', 'Page racine manquante') if notion_token else ('err', 'Jeton absent') -%}
+{%- set gd = ('warn', 'Lecture des cours non autorisée') if drive_status.connected and not drive_status.can_read
+    else ('ok', drive_status.message) if drive_status.connected else ('warn', 'Non connecté') if drive_status.configured else ('err', 'Non configuré') -%}
 {%- set ms = ('ok', 'Clé présente') if mistral_key else ('err', 'Clé absente') -%}
 <div class="narrow">
 <div class="page-head">
   <div>
     <h1>Paramètres</h1>
-    <p class="muted">Emploi du temps, destinations des cours et modèles.</p>
+    <p class="muted">Emploi du temps, Google Drive et transcription.</p>
   </div>
 </div>
 
 <ul class="status-chips" aria-label="État de la configuration">
-  {% for anchor, label, st in [('edt', 'Emploi du temps', edt), ('drive', 'Google Drive', gd), ('notion', 'Notion', nt), ('mistral', 'Mistral', ms)] %}
+  {% for anchor, label, st in [('edt', 'Emploi du temps', edt), ('drive', 'Google Drive', gd), ('mistral', 'Mistral', ms)] %}
   <li><a class="badge {{ st[0] }}" href="#{{ anchor }}">{{ '✓' if st[0] == 'ok' else '!' }} {{ label }}<span class="visually-hidden"> : {{ st[1] }}</span></a></li>
   {% endfor %}
 </ul>
@@ -55,18 +55,19 @@
     <h2 id="drive-title"><span aria-hidden="true">📁</span> Google Drive</h2>
     {{ state(*gd) }}
   </div>
-  {% if s.drive_writer == 'automatisation' %}
-  <p class="small"><strong>Mode automatisation</strong> : l'app dépose chaque transcription (et ses supports) dans les dossiers
-    « Transcriptions » et « Supports » de la matière ; les séances, le cours complet, <code>_etat.md</code> et le Google Doc
-    sont rédigés par votre automatisation.</p>
-  {% else %}
-  <p class="small muted">Archive Markdown de chaque séance et Google Doc par matière pour NotebookLM.</p>
-  {% endif %}
+  <p class="small muted">L'app dépose chaque transcription (et ses supports) dans les dossiers « Transcriptions » et
+    « Supports » de la matière. Votre tâche Claude rédige le cours dans « Séances » ; l'app le récupère toutes les 10 minutes
+    pour l'afficher dans Cours.</p>
   {% if not drive_status.configured %}
     <p class="notice">{{ drive_status.message }} Suivez la section « Google Drive » du README pour créer <code>credentials.json</code>.</p>
   {% else %}
     {% if not drive_status.connected and drive_status.message not in ('Non connecté',) %}<p class="small warn-text">{{ drive_status.message }}
       <a href="/parametres?check=1#drive">Revérifier</a></p>{% endif %}
+    {% if drive_status.connected and not drive_status.can_read %}
+    <p class="notice small">L'app peut déposer les transcriptions mais pas lire les cours écrits par Claude. Ajoutez le scope
+      <code>…/auth/drive.readonly</code> dans <a href="{{ drive_links.scopes }}" target="_blank" rel="noopener">Accès aux données</a>,
+      puis déconnectez et reconnectez Drive en laissant cochée l'autorisation de voir vos fichiers.</p>
+    {% endif %}
     <div class="actions">
       {% if drive_status.connected %}
         {% if drive_root_url %}<a class="btn ext" href="{{ drive_root_url }}" target="_blank" rel="noopener">Ouvrir le dossier</a>{% endif %}
@@ -91,7 +92,8 @@
         <li><a href="{{ drive_links.api }}" target="_blank" rel="noopener">API Google Drive</a> : cliquez sur « Activer ».</li>
         <li><a href="{{ drive_links.audience }}" target="_blank" rel="noopener">Audience</a> : « Publier l'application » (Production).
           À défaut, ajoutez votre adresse Gmail dans « Utilisateurs test » (l'autorisation expirera alors tous les 7 jours).</li>
-        <li><a href="{{ drive_links.scopes }}" target="_blank" rel="noopener">Accès aux données</a> : ajoutez le scope <code>…/auth/drive.file</code>.</li>
+        <li><a href="{{ drive_links.scopes }}" target="_blank" rel="noopener">Accès aux données</a> : ajoutez les scopes <code>…/auth/drive.file</code>
+          (dépôt des transcriptions) et <code>…/auth/drive.readonly</code> (lecture des cours écrits par Claude).</li>
         <li><a href="{{ drive_links.clients }}" target="_blank" rel="noopener">Clients</a> : type « Application de bureau », JSON enregistré sous <code>credentials.json</code> à la racine du projet.</li>
         <li>Si Google affiche « Google n'a pas validé cette application », cliquez sur « Continuer » : c'est normal pour une application personnelle.</li>
       </ol>
@@ -100,43 +102,11 @@
   <details class="more">
     <summary>Options</summary>
     <form method="post" action="/parametres/drive">
-      <fieldset class="bare">
-        <legend><strong>Qui rédige les cours dans Drive ?</strong></legend>
-        <label class="check"><input type="radio" name="drive_writer" value="app" {{ 'checked' if s.drive_writer != 'automatisation' }}>
-          <span>L'app : fiches de séance, cours complet, <code>_etat.md</code> et Google Doc NotebookLM.</span></label>
-        <label class="check"><input type="radio" name="drive_writer" value="automatisation" {{ 'checked' if s.drive_writer == 'automatisation' }}>
-          <span>Une automatisation externe : l'app dépose seulement chaque transcription dans « Transcriptions » (et les
-            supports dans « Supports ») de la matière, et ne touche plus aux autres fichiers. Notion reste publié par l'app.</span></label>
-      </fieldset>
-      <div class="field" style="margin-top:0.85rem"><label for="drive_root_name">Nom du dossier racine</label>
+      <div class="field"><label for="drive_root_name">Nom du dossier racine</label>
         <input type="text" id="drive_root_name" name="drive_root_name" value="{{ s.drive_root_name }}"></div>
-      <label class="check"><input type="checkbox" name="drive_notebooklm" value="1" {{ 'checked' if s.drive_notebooklm == '1' }}>
-        Google Doc pour NotebookLM (mis à jour sur le même fichier à chaque séance)</label>
-      <label class="check"><input type="checkbox" name="drive_upload_sources" value="1" {{ 'checked' if s.drive_upload_sources == '1' }}>
-        Envoyer aussi l'audio et la transcription (dossier « Sources »)</label>
-      <button style="margin-top:0.5rem">Enregistrer les options</button>
+      <button>Enregistrer</button>
     </form>
   </details>
-</section>
-
-<section class="card" id="notion" aria-labelledby="notion-title">
-  <div class="card-head">
-    <h2 id="notion-title"><span aria-hidden="true">📓</span> Notion</h2>
-    {{ state(*nt) }}
-  </div>
-  <p class="small muted">Une page par séance, à annoter librement ; bases « Matières » et « Séances » créées automatiquement.</p>
-  {% if not notion_token %}<p class="notice">Ajoutez le jeton d'intégration <code>NOTION_TOKEN</code> dans le fichier <code>.env</code>, puis relancez l'app.</p>{% endif %}
-  <form method="post" action="/parametres/notion">
-    <div class="field"><label for="notion_root">Page racine (lien ou ID)</label>
-      <input type="text" id="notion_root" name="notion_root" value="{{ s.notion_root }}" placeholder="https://www.notion.so/…"></div>
-    <button class="primary">Enregistrer et vérifier</button>
-  </form>
-  {% if notion_urls.matieres or notion_urls.seances %}
-  <p class="small">Bases :
-    {% if notion_urls.matieres %}<a class="ext" href="{{ notion_urls.matieres }}" target="_blank" rel="noopener">Matières</a>{% endif %}
-    {% if notion_urls.matieres and notion_urls.seances %} · {% endif %}
-    {% if notion_urls.seances %}<a class="ext" href="{{ notion_urls.seances }}" target="_blank" rel="noopener">Séances</a>{% endif %}</p>
-  {% endif %}
 </section>
 
 <section class="card" id="mistral" aria-labelledby="mistral-title">
@@ -144,42 +114,21 @@
     <h2 id="mistral-title"><span aria-hidden="true">🤖</span> Mistral</h2>
     {{ state(*ms) }}
   </div>
-  <p class="small muted">Transcription ({{ s.transcription_model }}), mise en forme des cours ({{ s.llm_model }})
-    et lecture des supports de cours ({{ s.ocr_model }}).</p>
+  <p class="small muted">Transcription des cours ({{ s.transcription_model }}), avec le vocabulaire de chaque matière.</p>
   {% if not mistral_key %}<p class="notice">Ajoutez la clé <code>MISTRAL_API_KEY</code> dans le fichier <code>.env</code>, puis relancez l'app.</p>{% endif %}
   <button type="button" hx-post="/parametres/mistral/test" hx-target="#mistral-test">Tester la clé</button>
   <div id="mistral-test" aria-live="polite"></div>
   <details class="more">
-    <summary>Modèles et réglages avancés</summary>
+    <summary>Réglages avancés</summary>
     <form method="post" action="/parametres/modeles">
-      <div class="field"><label for="llm_model">Modèle de mise en forme (LLM)</label>
-        <input type="text" id="llm_model" name="llm_model" value="{{ s.llm_model }}" list="models"></div>
       <div class="field"><label for="transcription_model">Modèle de transcription</label>
         <input type="text" id="transcription_model" name="transcription_model" value="{{ s.transcription_model }}" list="models"></div>
-      <div class="field"><label for="ocr_model">Modèle de lecture des supports (OCR)</label>
-        <input type="text" id="ocr_model" name="ocr_model" value="{{ s.ocr_model }}" list="models"></div>
-      <datalist id="models">
-        <option value="mistral-small-2603" label="Mistral Small 4"><option value="mistral-small-latest">
-        <option value="mistral-medium-latest"><option value="mistral-large-latest">
-        <option value="voxtral-mini-latest"><option value="mistral-ocr-latest">
-      </datalist>
-      <div class="field"><label for="llm_reasoning_effort">Raisonnement du modèle (<code>reasoning_effort</code>)</label>
-        <select id="llm_reasoning_effort" name="llm_reasoning_effort">
-          {% for value, label in [('high', 'Activé (high) — plus lent, meilleure rédaction'), ('none', 'Désactivé (none) — réponse directe'), ('', 'Paramètre non envoyé (modèles sans raisonnement)')] %}
-            <option value="{{ value }}" {{ 'selected' if s.llm_reasoning_effort == value }}>{{ label }}</option>
-          {% endfor %}
-        </select></div>
+      <datalist id="models"><option value="voxtral-mini-latest"></datalist>
       <div class="field-row">
         <div class="field"><label for="transcription_language">Langue</label>
           <input type="text" id="transcription_language" name="transcription_language" value="{{ s.transcription_language }}"></div>
         <div class="field"><label for="audio_bitrate">Débit MP3</label>
           <input type="text" id="audio_bitrate" name="audio_bitrate" value="{{ s.audio_bitrate }}"></div>
-      </div>
-      <div class="field-row" style="margin-top:0.85rem">
-        <div class="field"><label for="llm_chunk_chars">Taille d'un bloc de transcription (caractères)</label>
-          <input type="number" id="llm_chunk_chars" name="llm_chunk_chars" value="{{ s.llm_chunk_chars }}" min="5000" step="1000"></div>
-        <div class="field"><label for="llm_max_tokens">max_tokens par appel</label>
-          <input type="number" id="llm_max_tokens" name="llm_max_tokens" value="{{ s.llm_max_tokens }}" min="2000" step="1000"></div>
       </div>
       <button style="margin-top:0.85rem">Enregistrer</button>
     </form>
@@ -191,8 +140,7 @@
   <form method="post" action="/parametres/rappel" class="inline-form">
     <button class="link">Réafficher le rappel « accord de l'enseignant »</button>
   </form>
-  <p class="small muted">Données locales dans <code>data/</code> (audio, transcriptions, cours, états, base SQLite).
-    Prompts modifiables : <code>prompts/format_course.md</code>, <code>prompts/update_state.md</code>.</p>
+  <p class="small muted">Données locales dans <code>data/</code> (audio, transcriptions, cours récupérés, base SQLite).</p>
 </section>
 </div>
 {% endblock %}

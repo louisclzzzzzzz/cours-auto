@@ -1,4 +1,4 @@
-"""Réglages d'une matière : termes proposés, vocabulaire, intitulés ADE, état de matière.
+"""Réglages d'une matière : vocabulaire (transcription), nom et enseignants, intitulés ADE.
 
 La liste des matières fait partie de la page « Cours »."""
 
@@ -56,8 +56,6 @@ def subject_page(request: Request, sid: int):
         subject=subject,
         mappings=db.list_mappings(sid),
         vocab=vocab,
-        proposed=subjects.get_proposed_terms(subject),
-        state=subjects.read_state(subject),
         counts=db.session_counts(sid),
         n_recordings=len(db.list_recordings(sid)),
         max_vocab=subjects.MAX_VOCABULARY,
@@ -113,26 +111,3 @@ def save_vocabulary(sid: int, terms: str = Form("")):
     except ValueError as exc:
         return redirect(f"/matieres/{sid}", str(exc), "err")
     return redirect(f"/matieres/{sid}", f"Vocabulaire enregistré ({len(saved)} termes).")
-
-
-@router.post("/matieres/{sid}/propositions", response_class=HTMLResponse)
-def resolve_proposals(request: Request, sid: int, accepted: list[str] = Form(default=[]),
-                      decision: str = Form("accept")):
-    subject = _subject_or_404(sid)
-    proposed = subjects.get_proposed_terms(subject)
-    if decision == "reject_all":
-        subjects.resolve_proposed_terms(sid, [], proposed)
-        return redirect(f"/matieres/{sid}#vocabulaire", "Propositions ignorées.")
-    # « Valider » : les termes cochés rejoignent le vocabulaire, les autres sont écartés.
-    checked = {t.casefold() for t in accepted}
-    rejected = [t for t in proposed if t.casefold() not in checked]
-    added, warning = subjects.resolve_proposed_terms(sid, accepted, rejected)
-    msg = warning or f"{len(added)} terme(s) ajouté(s) au vocabulaire" + (f", {len(rejected)} écarté(s)." if rejected else ".")
-    return redirect(f"/matieres/{sid}#vocabulaire", msg)
-
-
-@router.post("/matieres/{sid}/etat")
-def save_state(sid: int, state: str = Form("")):
-    subject = _subject_or_404(sid)
-    subjects.write_state(subject, state)
-    return redirect(f"/matieres/{sid}", "État de la matière enregistré.")

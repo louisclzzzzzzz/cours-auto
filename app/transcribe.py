@@ -11,10 +11,10 @@ import wave
 from collections import defaultdict
 from pathlib import Path
 
+from mistralai.client import Mistral
 from mistralai.client.errors import MistralError
 
-from . import db, recorder
-from .llm import get_client
+from . import config, db, recorder
 from .retry import with_retries
 from .textutils import fmt_ts
 
@@ -22,6 +22,26 @@ log = logging.getLogger(__name__)
 
 MAX_BIAS_TERMS = 100
 TRANSCRIBE_TIMEOUT_MS = 45 * 60 * 1000
+
+
+class TranscriptionError(RuntimeError):
+    pass
+
+
+def get_client() -> Mistral:
+    key = config.mistral_api_key()
+    if not key:
+        raise TranscriptionError("Clé MISTRAL_API_KEY absente du fichier .env.")
+    return Mistral(api_key=key)
+
+
+def test_api_key() -> tuple[bool, str, list[str]]:
+    try:
+        models = get_client().models.list()
+        ids = sorted({m.id for m in (models.data or [])})
+        return True, f"Clé valide ({len(ids)} modèles disponibles).", ids
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Échec : {exc}", []
 
 
 def normalize_bias_terms(terms: list[str]) -> list[str]:

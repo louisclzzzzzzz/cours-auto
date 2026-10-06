@@ -233,6 +233,10 @@ button.link:hover, .link-btn:hover { background: none; text-decoration-thickness
 button.small, .btn.small { min-height: 2rem; padding: 0.3rem 0.7rem; font-size: 0.875rem; }
 button.icon, .btn.icon { min-width: 2.4rem; padding: 0.45rem 0.6rem; }
 .inline-form { display: inline; margin: 0; }
+/* Corbeille des listes : discrète, rouge au survol. */
+button.trash { min-width: 2rem; min-height: 2rem; padding: 0.3rem; border-color: transparent; background: none; color: var(--muted); }
+button.trash:hover { color: var(--danger); background: var(--danger-soft); }
+button.trash svg { width: 1.05rem; height: 1.05rem; }
 .ext::after { content: " ↗"; font-size: 0.85em; }
 
 /* --- Menus déroulants (« ⋯ », « + Nouvelle matière ») --- */
@@ -327,6 +331,7 @@ table.list th {
 table.list .row-title { display: inline-block; }
 table.list .launch { margin-top: 0.4rem; }
 table.list .launch:empty { display: none; }
+table.list td.row-actions { width: 1%; padding-left: 0; text-align: right; }
 
 /* --- Accueil : choix du cours --- */
 .record-layout { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1.1fr) minmax(320px, 1fr); align-items: start; }

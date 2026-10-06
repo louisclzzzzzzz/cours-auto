@@ -1,4 +1,4 @@
-{% from "macros.html" import status_badge, session_name, launch_button %}
+{% from "macros.html" import status_badge, session_name, launch_button, delete_form %}
 {# Se recharge toutes les 5 s tant qu'un enregistrement est en cours de traitement. #}
 <tbody id="rec-rows" {% if polling %}hx-get="/fragments/recordings" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>
 {% for r in recs %}
@@ -13,8 +13,9 @@
     {% if pipeline.current and pipeline.current.get('recording_id') == r.id %}<div class="small muted">{{ pipeline.describe() }}</div>{% endif %}
     {% if r.status == 'uploaded' %}<div class="launch">{{ launch_button(r, "/enregistrements") }}</div>{% endif %}
   </td>
+  <td class="row-actions">{{ delete_form(r, "/enregistrements", trash=true) }}</td>
 </tr>
 {% else %}
-<tr><td colspan="4" class="muted">Aucun enregistrement pour l'instant. Commencez depuis la page <a href="/">Enregistrer</a>.</td></tr>
+<tr><td colspan="5" class="muted">Aucun enregistrement pour l'instant. Commencez depuis la page <a href="/">Enregistrer</a>.</td></tr>
 {% endfor %}
 </tbody>
