@@ -1,16 +1,19 @@
-"""Historique : liste, détail (avancement, relances, supports de cours), écoute, transcription, suppression."""
+"""Historique : agenda (par défaut) ou liste, détail (avancement, relances, supports de cours), écoute, transcription, suppression."""
 
 from __future__ import annotations
+
+import calendar
+from datetime import date, timedelta
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 
-from .. import config, db, recorder, subjects, supports
+from .. import calendar_ics, config, db, recorder, subjects, supports
 from ..markdown_utils import replace_title
 from ..pipeline import BUSY_STATUSES, STEP_LABELS, pipeline
 from ..publish import drive
-from ..textutils import fmt_duration, parse_date
+from ..textutils import MOIS, fmt_duration, parse_date
 from ..web import redirect, render
 
 router = APIRouter()
@@ -44,11 +47,47 @@ def _files(rid: int) -> dict:
     }
 
 
-def _list_context() -> dict:
-    recs = db.list_recordings()
+def _list_context(day: str | None = None) -> dict:
+    """Séances (toutes, ou celles d'un jour de l'agenda) et rechargement de la liste pendant un traitement."""
+    recs = db.list_recordings(day=day)
     polling = any(r["status"] in BUSY_STATUSES or r["status"] == "recording" or pipeline.is_active(r["id"])
                   or r.get("auto_retry_at") for r in recs)
-    return {"recs": recs, "polling": polling}
+    if day is None:
+        return {"recs": recs, "polling": polling, "rows_url": "/fragments/recordings", "back": "/enregistrements?vue=liste"}
+    return {"recs": recs, "polling": polling, "rows_url": f"/fragments/recordings?jour={day}",
+            "back": f"/enregistrements?mois={day[:7]}&jour={day}"}
+
+
+def _month(value: str) -> date | None:
+    """« 2026-10 » → 1er octobre 2026."""
+    try:
+        year, month = (int(x) for x in value.split("-"))
+        return date(year, month, 1)
+    except ValueError:
+        return None
+
+
+def agenda_context(month: str = "", day: str = "") -> dict:
+    """Vue agenda : le mois en semaines (lundi → dimanche), le nombre de séances par jour et celles du jour choisi
+    (par défaut aujourd'hui, s'il y en a)."""
+    today = calendar_ics.now_local().date()
+    selected = parse_date(day)
+    first = _month(month) or (selected or today).replace(day=1)
+    weeks = calendar.Calendar().monthdatescalendar(first.year, first.month)
+    counts = db.recordings_per_day(weeks[0][0].isoformat(), weeks[-1][-1].isoformat())
+    if selected is None and first == today.replace(day=1) and counts.get(today.isoformat()):
+        selected = today
+    return {
+        "month_label": f"{MOIS[first.month - 1]} {first.year}",
+        "month": first,
+        "prev_month": (first - timedelta(days=1)).replace(day=1),
+        "next_month": (first + timedelta(days=31)).replace(day=1),
+        "weeks": weeks,
+        "counts": counts,
+        "today": today,
+        "selected": selected,
+        **(_list_context(selected.isoformat()) if selected else {"recs": [], "polling": False}),
+    }
 
 
 def progress_steps(rec: dict, files: dict) -> list[dict]:
@@ -114,27 +153,37 @@ def _ready_to_process() -> list[dict]:
 
 
 @router.get("/enregistrements", response_class=HTMLResponse)
-def list_page(request: Request):
-    return render(request, "recordings.html", **_list_context(), n_ready=len(_ready_to_process()))
+def list_page(request: Request, vue: str = "", mois: str = "", jour: str = ""):
+    agenda = vue != "liste"  # l'agenda est la vue par défaut
+    return render(request, "recordings.html", **(agenda_context(mois, jour) if agenda else _list_context()),
+                  view="agenda" if agenda else "liste", n_ready=len(_ready_to_process()))
 
 
 @router.post("/enregistrements/tout-traiter")
-def process_all():
+def process_all(back: str = Form("")):
     """« Tout traiter » : lance le traitement de chaque séance prête ; la file les traite une à la fois."""
+    target = back if back.startswith("/") else "/enregistrements"
     ready = _ready_to_process()
     if not ready:
-        return redirect("/enregistrements", "Aucune séance prête à traiter.")
+        return redirect(target, "Aucune séance prête à traiter.")
     for rec in ready:
         db.update_recording(rec["id"], auto_retry_at=None, auto_retry_count=0)
         pipeline.submit("recording", rec["id"], "transcribe")
     n = len(ready)
-    return redirect("/enregistrements", f"Traitement lancé pour {n} séance{'s' if n > 1 else ''} : transcription puis "
+    return redirect(target, f"Traitement lancé pour {n} séance{'s' if n > 1 else ''} : transcription puis "
                                         "dépôt dans Drive, une à la fois.")
 
 
 @router.get("/fragments/recordings", response_class=HTMLResponse)
-def list_fragment(request: Request):
-    return render(request, "partials/recordings_rows.html", **_list_context())
+def list_fragment(request: Request, jour: str = ""):
+    day = parse_date(jour)
+    return render(request, "partials/recordings_rows.html", **_list_context(day.isoformat() if day else None))
+
+
+@router.get("/fragments/agenda", response_class=HTMLResponse)
+def agenda_fragment(request: Request, mois: str = "", jour: str = ""):
+    """Changement de mois ou de jour dans l'agenda, sans recharger la page."""
+    return render(request, "partials/agenda.html", **agenda_context(mois, jour))
 
 
 @router.get("/enregistrements/{rid}", response_class=HTMLResponse)

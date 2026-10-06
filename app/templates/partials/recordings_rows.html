@@ -1,6 +1,7 @@
 {% from "macros.html" import status_badge, session_name, launch_button, delete_form %}
-{# Se recharge toutes les 5 s tant qu'un enregistrement est en cours de traitement. #}
-<tbody id="rec-rows" {% if polling %}hx-get="/fragments/recordings" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>
+{# Se recharge toutes les 5 s tant qu'un enregistrement est en cours de traitement. `rows_url` : toutes les séances
+   ou celles d'un jour de l'agenda ; `back` : page où revenir après une action. #}
+<tbody id="rec-rows" {% if polling %}hx-get="{{ rows_url }}" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>
 {% for r in recs %}
 <tr data-href="/enregistrements/{{ r.id }}">
   <td class="nowrap">{{ r.session_date|fr_short_date }}<div class="small muted">{{ r.started_at[11:16] }}</div></td>
@@ -11,9 +12,9 @@
   <td class="nowrap">{{ (r.duration_seconds or r.elapsed_seconds)|duration }}</td>
   <td>{{ status_badge(r) }}
     {% if pipeline.current and pipeline.current.get('recording_id') == r.id %}<div class="small muted">{{ pipeline.describe() }}</div>{% endif %}
-    {% if r.status == 'uploaded' %}<div class="launch">{{ launch_button(r, "/enregistrements") }}</div>{% endif %}
+    {% if r.status == 'uploaded' %}<div class="launch">{{ launch_button(r, back) }}</div>{% endif %}
   </td>
-  <td class="row-actions">{{ delete_form(r, "/enregistrements", trash=true) }}</td>
+  <td class="row-actions">{{ delete_form(r, back, trash=true) }}</td>
 </tr>
 {% else %}
 <tr><td colspan="5" class="muted">Aucun enregistrement pour l'instant. Commencez depuis la page <a href="/">Enregistrer</a>.</td></tr>

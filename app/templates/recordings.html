@@ -6,24 +6,27 @@
     <h1>Historique</h1>
     <p class="muted">Tous vos enregistrements et l'avancement de leur traitement.</p>
   </div>
-  {% if n_ready %}
-  {%- set question = ('Lancer le traitement des %d séances prêtes ?\n\nElles seront transcrites puis déposées dans Drive, '
-      ~ 'une à la fois.') % n_ready if n_ready > 1
-      else 'Lancer le traitement de la séance prête ?\n\nElle sera transcrite puis déposée dans Drive.' %}
   <div class="actions">
+    <nav class="segmented" aria-label="Affichage de l'historique">
+      <a href="/enregistrements" {% if view == 'agenda' %}aria-current="page"{% endif %}>Agenda</a>
+      <a href="/enregistrements?vue=liste" {% if view == 'liste' %}aria-current="page"{% endif %}>Liste</a>
+    </nav>
+    {% if n_ready %}
+    {%- set question = ('Lancer le traitement des %d séances prêtes ?\n\nElles seront transcrites puis déposées dans Drive, '
+        ~ 'une à la fois.') % n_ready if n_ready > 1
+        else 'Lancer le traitement de la séance prête ?\n\nElle sera transcrite puis déposée dans Drive.' %}
     <form method="post" action="/enregistrements/tout-traiter" class="inline-form" onsubmit='return confirm({{ question|tojson }})'>
+      <input type="hidden" name="back" value="{{ back|default('/enregistrements') }}">
       <button class="primary"><span aria-hidden="true">▶</span> Tout traiter ({{ n_ready }})</button>
     </form>
+    {% endif %}
   </div>
-  {% endif %}
 </div>
+{% if view == 'agenda' %}
+{% include "partials/agenda.html" %}
+{% else %}
 <div class="card flush table-wrap">
-  <table class="list">
-    <caption class="visually-hidden">Enregistrements, du plus récent au plus ancien</caption>
-    <thead>
-      <tr><th scope="col">Date</th><th scope="col">Cours</th><th scope="col">Durée</th><th scope="col">Statut</th><th scope="col"><span class="visually-hidden">Supprimer</span></th></tr>
-    </thead>
-    {% include "partials/recordings_rows.html" %}
-  </table>
+  {% with caption = 'Enregistrements, du plus récent au plus ancien' %}{% include "partials/recordings_table.html" %}{% endwith %}
 </div>
+{% endif %}
 {% endblock %}

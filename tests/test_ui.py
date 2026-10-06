@@ -134,9 +134,9 @@ def test_detail_page_retry_button_and_polling(client):
     page = client.get(f"/enregistrements/{rid}").text
     assert 'hx-trigger="every 3s"' in page and "Réessayer" not in page
     # Historique : rechargement périodique seulement pendant un traitement.
-    assert 'hx-trigger="every 5s"' in client.get("/enregistrements").text
+    assert 'hx-trigger="every 5s"' in client.get("/enregistrements?vue=liste").text
     db.update_recording(rid, status="done")
-    assert 'hx-trigger="every 5s"' not in client.get("/enregistrements").text
+    assert 'hx-trigger="every 5s"' not in client.get("/enregistrements?vue=liste").text
     assert "every 4s" not in client.get("/fragments/latest").text
 
 
@@ -146,7 +146,7 @@ def test_audio_ready_waits_for_manual_launch(client, monkeypatch):
     recorder.audio_path(rid).write_bytes(b"mp3")
     db.update_recording(rid, status="uploaded", duration_seconds=3600)
     # Rien ne tourne tout seul : un bouton lance le traitement (accueil, Historique, fiche), sans rechargement auto.
-    for url in ("/", "/enregistrements", f"/enregistrements/{rid}"):
+    for url in ("/", "/enregistrements?vue=liste", f"/enregistrements/{rid}"):
         assert "Lancer le traitement" in client.get(url).text, url
     assert "Prêt à traiter" in client.get("/fragments/latest").text
     assert "every 4s" not in client.get("/fragments/latest").text
@@ -173,7 +173,7 @@ def test_waiting_for_claude_then_course_ready(client, monkeypatch):
     rid = done_recording(sid, drive_md_id=None, drive_md_url=None, drive_transcription_id="t1",
                          drive_transcription_url="https://drive.example/t1")
     subjects.course_path(rid).unlink()
-    assert "En attente du cours" in client.get("/enregistrements").text
+    assert "En attente du cours" in client.get("/enregistrements?vue=liste").text
     page = client.get(f"/enregistrements/{rid}").text
     assert "Transcription déposée dans Drive" in page and "Vérifier maintenant" in page and "Voir le cours" not in page
 
@@ -187,7 +187,7 @@ def test_waiting_for_claude_then_course_ready(client, monkeypatch):
     location = urlparse(r.headers["location"])
     assert location.path == f"/enregistrements/{rid}"
     assert parse_qs(location.query)["msg"] == ["1 cours récupéré depuis Drive : Graphes CM 1 – Graphes."]
-    assert "Cours prêt" in client.get("/enregistrements").text
+    assert "Cours prêt" in client.get("/enregistrements?vue=liste").text
     page = client.get(f"/enregistrements/{rid}").text
     assert "Voir le cours" in page and "https://drive.example/f2" in page
     preview = client.get(f"/fragments/cours/seance/{rid}").text
@@ -264,7 +264,7 @@ def test_deleting_a_false_start_renumbers_following_sessions(client):
     assert db.get_recording(real)["session_number"] == 3
 
     # Corbeille dans l'Historique et sur l'accueil ; entrée du menu ⋯ dans la page « Cours ».
-    assert f'action="/enregistrements/{false_start}/delete"' in client.get("/enregistrements").text
+    assert f'action="/enregistrements/{false_start}/delete"' in client.get("/enregistrements?vue=liste").text
     assert f'action="/enregistrements/{false_start}/delete"' in client.get("/fragments/latest").text
     assert "Supprimer la séance…" in client.get(f"/fragments/cours/seance/{real}").text
 
@@ -302,7 +302,7 @@ def test_deletion_keeps_numbers_when_duplicated_and_waits_for_processing(client)
     assert parse_qs(urlparse(r.headers["location"]).query)["level"] == ["err"]
     assert db.get_recording(a) and db.get_recording(c)["session_number"] == 3
     # Elle-même en traitement : pas de corbeille active.
-    assert "Traitement en cours : suppression impossible" in client.get("/enregistrements").text
+    assert "Traitement en cours : suppression impossible" in client.get("/enregistrements?vue=liste").text
 
 
 def test_process_all_launches_every_ready_session(client, monkeypatch):
@@ -313,19 +313,52 @@ def test_process_all_launches_every_ready_session(client, monkeypatch):
         db.update_recording(rid, status="uploaded", auto_retry_count=2)
         ready.append(rid)
     done_recording(sid)
-    page = client.get("/enregistrements").text
+    page = client.get("/enregistrements?vue=liste").text
     assert "Tout traiter (2)" in page and "Lancer le traitement des 2 s\\u00e9ances" in page  # confirmation (JSON)
 
     submitted = []
     monkeypatch.setattr(pl.pipeline, "submit", lambda kind, target, action, chain=True: submitted.append((target, action, chain)))
-    r = client.post("/enregistrements/tout-traiter", follow_redirects=False)
-    assert parse_qs(urlparse(r.headers["location"]).query)["msg"][0].startswith("Traitement lancé pour 2 séances")
+    r = client.post("/enregistrements/tout-traiter", data={"back": "/enregistrements?vue=liste"}, follow_redirects=False)
+    location = urlparse(r.headers["location"])
+    assert parse_qs(location.query)["vue"] == ["liste"]  # retour dans la vue d'où l'on vient
+    assert parse_qs(location.query)["msg"][0].startswith("Traitement lancé pour 2 séances")
     assert submitted == [(rid, "transcribe", True) for rid in ready]  # la plus ancienne d'abord
     assert all(db.get_recording(rid)["auto_retry_count"] == 0 for rid in ready)
 
     # Déjà en file : plus de bouton, et un second clic ne les relance pas.
     monkeypatch.setattr(pl.pipeline, "is_active", lambda rid: rid in ready)
-    assert "Tout traiter" not in client.get("/enregistrements").text
+    assert "Tout traiter" not in client.get("/enregistrements?vue=liste").text
     r = client.post("/enregistrements/tout-traiter", follow_redirects=False)
     assert parse_qs(urlparse(r.headers["location"]).query)["msg"] == ["Aucune séance prête à traiter."]
     assert len(submitted) == 2
+
+
+def test_history_agenda_view(client):
+    sid = subjects.create_subject("Graphes")
+    for day in ("2026-09-21", "2026-09-21", "2026-09-28"):
+        done_recording(sid, session_date=day)
+    other = recorder.create_recording(subject_id=sid, course_type="TD", session_date="2026-10-02")  # mois suivant
+    page = client.get("/enregistrements?vue=liste").text
+    assert '<a href="/enregistrements?vue=liste" aria-current="page">Liste</a>' in page and page.count('data-href="/enr') == 4
+
+    # Vue par défaut, sur le mois en cours (septembre 2026, le 27 est « aujourd'hui ») : une bulle par jour.
+    page = client.get("/enregistrements").text
+    assert '<a href="/enregistrements" aria-current="page">Agenda</a>' in page
+    assert "Septembre 2026" in page and "Lun" in page and "Dim" in page
+    assert 'title="lundi 21 septembre 2026 : 2 enregistrements"' in page and '<span class="bubble">2</span>' in page
+    assert 'title="lundi 28 septembre 2026 : 1 enregistrement"' in page
+    assert 'title="vendredi 2 octobre 2026 : 1 enregistrement"' in page  # jours du mois voisin visibles dans la grille
+    assert "Cliquez sur un jour" in page and 'id="rec-rows"' not in page  # aucune séance aujourd'hui
+
+    # Clic sur un jour : ses séances seulement, retour à l'agenda après une action.
+    day = client.get("/fragments/agenda?mois=2026-09&jour=2026-09-21").text
+    assert 'aria-current="date"' in day and "Lundi 21 septembre 2026" in day
+    assert day.count('data-href="/enregistrements/') == 2 and f'/enregistrements/{other}"' not in day
+    assert 'name="back" value="/enregistrements?mois=2026-09&amp;jour=2026-09-21"' in day
+    rows = client.get("/fragments/recordings?jour=2026-09-21").text
+    assert rows.count('data-href="/enregistrements/') == 2
+
+    # Navigation entre les mois ; un mois ou un jour invalide retombe sur le mois en cours.
+    october = client.get("/enregistrements?mois=2026-10").text
+    assert "Octobre 2026" in october and "Aujourd&#39;hui" in october and "mois=2026-09" in october and "mois=2026-11" in october
+    assert "Septembre 2026" in client.get("/enregistrements?mois=n-importe&jour=quoi").text

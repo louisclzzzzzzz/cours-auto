@@ -325,16 +325,29 @@ def update_recording(recording_id: int, **fields: Any) -> None:
     _update("recordings", recording_id, fields)
 
 
-def list_recordings(subject_id: int | None = None, limit: int | None = None) -> list[dict]:
+def list_recordings(subject_id: int | None = None, limit: int | None = None, day: str | None = None) -> list[dict]:
     sql = RECORDING_SELECT
+    where: list[str] = []
     params: list[Any] = []
     if subject_id is not None:
-        sql += " WHERE r.subject_id = ?"
+        where.append("r.subject_id = ?")
         params.append(subject_id)
+    if day is not None:
+        where.append("r.session_date = ?")
+        params.append(day)
+    if where:
+        sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY r.started_at DESC, r.id DESC"
     if limit:
         sql += f" LIMIT {int(limit)}"
     return q(sql, params)
+
+
+def recordings_per_day(start: str, end: str) -> dict[str, int]:
+    """Nombre de séances par date de cours (AAAA-MM-JJ), entre deux dates incluses."""
+    rows = q("SELECT session_date AS day, COUNT(*) AS n FROM recordings WHERE session_date BETWEEN ? AND ? "
+             "GROUP BY session_date", (start, end))
+    return {r["day"]: r["n"] for r in rows}
 
 
 def list_recordings_by_status(*statuses: str) -> list[dict]:

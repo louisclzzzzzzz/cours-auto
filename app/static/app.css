@@ -444,10 +444,43 @@ label.btn:focus-within { outline: 2px solid var(--primary); outline-offset: 2px;
 .session-list .title { display: block; font-weight: 600; line-height: 1.35; }
 .preview-toolbar { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; justify-content: flex-end; margin-bottom: 0.5rem; }
 .segmented { display: inline-flex; margin-right: auto; border: 1px solid var(--input-border); border-radius: var(--radius-sm); overflow: hidden; }
-.segmented button { min-height: 2.1rem; border: 0; border-radius: 0; font-size: 0.875rem; }
-.segmented button + button { border-left: 1px solid var(--input-border); }
-.segmented button[aria-pressed=true] { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
-.segmented button:focus-visible { outline-offset: -3px; }
+.segmented button, .segmented a { min-height: 2.1rem; border: 0; border-radius: 0; font-size: 0.875rem; }
+.segmented a { display: inline-flex; align-items: center; padding: 0.35rem 0.85rem; color: var(--text); background: var(--surface);
+  font-weight: 500; text-decoration: none; }
+.segmented a:hover { background: var(--surface-2); }
+.segmented button + button, .segmented a + a { border-left: 1px solid var(--input-border); }
+.segmented button[aria-pressed=true], .segmented a[aria-current] { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+.segmented button:focus-visible, .segmented a:focus-visible { outline-offset: -3px; }
+.page-head .segmented { margin-right: 0; }
+
+/* --- Historique : vue agenda (une bulle = nombre de séances du jour) --- */
+.agenda-card { margin-bottom: 1rem; overflow: hidden; }
+.agenda-head { display: flex; align-items: center; gap: 0.4rem; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); }
+.agenda-head h2 { margin: 0 auto 0 0; font-size: 1.05rem; }
+table.agenda { width: 100%; border-collapse: collapse; table-layout: fixed; }
+table.agenda th { padding: 0.5rem 0.25rem; font-size: 0.75rem; font-weight: 600; color: var(--muted); text-transform: uppercase;
+  letter-spacing: 0.04em; text-align: center; }
+table.agenda td { height: 4.6rem; padding: 0; border-top: 1px solid var(--border); border-left: 1px solid var(--border); vertical-align: top; }
+table.agenda td:first-child { border-left: 0; }
+table.agenda td.other { background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
+table.agenda td.other .num { color: var(--muted); }
+table.agenda .day { display: flex; flex-direction: column; align-items: flex-start; gap: 0.35rem; height: 100%;
+  padding: 0.4rem 0.5rem; color: var(--text); text-decoration: none; }
+table.agenda a.day:hover { background: var(--surface-2); }
+table.agenda a.day:focus-visible { outline-offset: -3px; }
+table.agenda td.selected a.day { background: var(--primary-soft); box-shadow: inset 0 0 0 2px var(--primary); }
+table.agenda .num { display: inline-grid; place-items: center; min-width: 1.6rem; height: 1.6rem; border-radius: 999px;
+  font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+table.agenda td.today .num { background: var(--primary); color: var(--on-primary); font-weight: 600; }
+table.agenda .bubble { display: inline-grid; place-items: center; min-width: 1.45rem; height: 1.45rem; padding: 0 0.4rem;
+  border-radius: 999px; background: var(--primary-soft); color: var(--primary); font-size: 0.78rem; font-weight: 700;
+  border: 1px solid color-mix(in srgb, var(--primary) 35%, transparent); }
+table.agenda td.selected .bubble { background: var(--surface); border-color: var(--primary); }
+.day-title { margin: 0; padding: 0.85rem 1rem; font-size: 1rem; border-bottom: 1px solid var(--border); }
+@media (max-width: 640px) {
+  table.agenda td { height: 3.4rem; }
+  table.agenda .day { padding: 0.25rem; align-items: center; gap: 0.15rem; }
+}
 .map-form { display: flex; gap: 0.5rem 0.75rem; align-items: center; flex-wrap: wrap; width: 100%; }
 .map-form select, .map-form input[type=text] { flex: 1 1 11rem; min-width: 0; }
 

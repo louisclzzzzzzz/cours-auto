@@ -177,7 +177,7 @@ def test_api_import_audio_file(tmp_path):
         assert 9 < rec["duration_seconds"] < 11
         assert recorder.source_path(rid).name == "source.m4a"
         assert recorder.audio_path(rid).exists()
-        assert "📁 importé" in client.get("/enregistrements").text
+        assert "📁 importé" in client.get("/enregistrements?vue=liste").text
 
         # Fichier sans piste audio : refusé, et rien ne reste en base.
         bad = tmp_path / "notes.txt"

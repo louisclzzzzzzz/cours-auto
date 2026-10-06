@@ -1,0 +1,53 @@
+{# Historique, vue agenda : une bulle par jour indique le nombre de séances ; un clic affiche celles du jour.
+   Changement de mois ou de jour sans recharger la page (le lien reste valable sans JavaScript). #}
+{% macro agenda_link(cls, month, day=None, label='', title='') -%}
+{%- set query = 'mois=' ~ month.strftime('%Y-%m') ~ ('&jour=' ~ day.isoformat() if day else '') -%}
+<a class="{{ cls }}" href="/enregistrements?{{ query }}" hx-get="/fragments/agenda?{{ query }}" hx-target="#agenda"
+   hx-swap="outerHTML" hx-push-url="/enregistrements?{{ query }}" {% if title %}title="{{ title }}" aria-label="{{ title }}"{% endif %}
+   {%- if day and day == selected %} aria-current="date"{% endif %}>{{ caller() if caller else label }}</a>
+{%- endmacro %}
+<div id="agenda">
+  <section class="card flush agenda-card" aria-labelledby="agenda-title">
+    <div class="agenda-head">
+      <h2 id="agenda-title">{{ month_label|capitalize }}</h2>
+      {{ agenda_link('btn small icon', prev_month, label='‹', title='Mois précédent') }}
+      {% if month != today.replace(day=1) %}{{ agenda_link('btn small', today.replace(day=1), label="Aujourd'hui") }}{% endif %}
+      {{ agenda_link('btn small icon', next_month, label='›', title='Mois suivant') }}
+    </div>
+    <table class="agenda">
+      <caption class="visually-hidden">Séances enregistrées en {{ month_label }} : nombre par jour</caption>
+      <thead>
+        <tr>{% for d in ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'] %}<th scope="col">{{ d }}</th>{% endfor %}</tr>
+      </thead>
+      <tbody>
+        {% for week in weeks %}
+        <tr>
+          {% for d in week %}
+          {%- set n = counts.get(d.isoformat(), 0) %}
+          <td class="{{ 'other' if d.month != month.month }}{{ ' today' if d == today }}{{ ' selected' if d == selected }}">
+            {% if n %}
+              {% call agenda_link('day', d.replace(day=1), d,
+                                  title=(d|fr_date) ~ ' : ' ~ n ~ ' enregistrement' ~ ('s' if n > 1 else '')) %}
+                <span class="num">{{ d.day }}</span><span class="bubble">{{ n }}</span>
+              {% endcall %}
+            {% else %}
+              <span class="day"><span class="num">{{ d.day }}</span></span>
+            {% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  {% if selected %}
+  <section class="card flush table-wrap" aria-labelledby="day-title">
+    <h2 id="day-title" class="day-title">{{ (selected|fr_date)|capitalize }}
+      <span class="muted small">· {{ recs|length }} enregistrement{{ 's' if recs|length > 1 }}</span></h2>
+    {% with caption = 'Enregistrements du ' ~ (selected|fr_date) %}{% include "partials/recordings_table.html" %}{% endwith %}
+  </section>
+  {% else %}
+  <p class="muted small">Cliquez sur un jour marqué d'une bulle pour voir ses enregistrements.</p>
+  {% endif %}
+</div>

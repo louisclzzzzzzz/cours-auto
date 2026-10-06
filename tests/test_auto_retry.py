@@ -127,7 +127,7 @@ def test_page_refreshes_and_manual_retry_starts_over(mistral, monkeypatch):
         monkeypatch.setattr(pl.pipeline, "submit", lambda kind, target, action, chain=True: submitted.append(action))
         page = client.get(f"/enregistrements/{rid}").text
         assert "Nouvel essai automatique vers" in page and 'hx-trigger="every 3s"' in page
-        assert 'every 5s' in client.get("/enregistrements").text
+        assert 'every 5s' in client.get("/enregistrements?vue=liste").text
         r = client.post(f"/enregistrements/{rid}/action", data={"action": "transcribe"}, follow_redirects=False)
         assert r.status_code == 303 and submitted == ["transcribe"]
     rec = db.get_recording(rid)
