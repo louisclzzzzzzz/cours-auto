@@ -1,11 +1,12 @@
 """File de tâches (un seul traitement à la fois, dans un thread dédié) et orchestration des étapes :
 
-recording → finalizing → uploaded → transcribing → transcribed → formatting → formatted → publishing → done
-(+ error avec l'étape en échec). La publication a un sous-statut par destination (drive, notion).
+recording → finalizing → uploaded → transcribing → transcribed → publishing → done
+(+ error avec l'étape en échec). La publication dépose la transcription et les supports dans Drive ; le cours
+est ensuite rédigé par une tâche Claude planifiée, puis récupéré depuis Drive (voir publish/drive.py).
 Chaque étape relit ses entrées sur le disque : elles sont idempotentes et relançables.
 
 À l'arrêt (ou à l'import), seul l'audio est préparé : l'enregistrement attend ensuite en « uploaded »
-que l'utilisateur lance le traitement (transcription → mise en forme → publication).
+que l'utilisateur lance le traitement (transcription → dépôt Drive).
 """
 
 from __future__ import annotations
@@ -18,10 +19,9 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from . import db, llm, recorder, retry, subjects, supports, transcribe
+from . import db, recorder, retry, subjects, transcribe
 from .publish import PublishSkipped
 from .publish import drive as drive_pub
-from .publish import notion as notion_pub
 
 log = logging.getLogger(__name__)
 
@@ -32,9 +32,7 @@ STATUS_LABELS = {
     "uploaded": "Prêt à traiter",
     "transcribing": "Transcription…",
     "transcribed": "Transcrit",
-    "formatting": "Mise en forme…",
-    "formatted": "Mis en forme",
-    "publishing": "Publication…",
+    "publishing": "Dépôt dans Drive…",
     "done": "Terminé",
     "error": "Erreur",
 }
@@ -48,20 +46,17 @@ SUB_LABELS = {
 STEP_LABELS = {
     "finalize": "finalisation audio",
     "transcribe": "transcription",
-    "format": "mise en forme",
-    "state": "état de matière",
     "publish": "publication",
-    "publish_drive": "publication Drive",
-    "publish_notion": "publication Notion",
-    "import_annotations": "import des annotations",
 }
 STEP_ACTIONS = {label: step for step, label in STEP_LABELS.items()}  # libellé d'étape en échec → étape
-CHAIN = ["transcribe", "format", "publish"]  # la finalisation de l'audio n'enchaîne pas : traitement lancé à la main
-BUSY_STATUSES = {"finalizing", "transcribing", "formatting", "publishing"}
+CHAIN = ["transcribe", "publish"]  # la finalisation de l'audio n'enchaîne pas : traitement lancé à la main
+BUSY_STATUSES = {"finalizing", "transcribing", "publishing"}
+# Étapes des versions précédentes (mise en forme par Mistral, Notion) : la séance reprend au dépôt Drive.
+LEGACY_STEPS = {"mise en forme", "état de matière", "publication Notion", "import des annotations"}
 
-# Étapes qui dépendent de Mistral : s'il est momentanément indisponible (5xx, 429, réseau), l'étape est
-# relancée toute seule plus tard (5, 10, 20, 40 min puis toutes les heures, environ 17 h au total).
-AUTO_RETRY_STEPS = {"transcribe", "format"}
+# Transcription : si Mistral est momentanément indisponible (5xx, 429, réseau), l'étape est relancée toute
+# seule plus tard (5, 10, 20, 40 min puis toutes les heures, environ 17 h au total).
+AUTO_RETRY_STEPS = {"transcribe"}
 AUTO_RETRY_MAX = 20
 
 
@@ -69,19 +64,18 @@ def auto_retry_delay(attempt: int) -> timedelta:
     return timedelta(minutes=min(5 * 2 ** (attempt - 1), 60))
 
 
-def unavailable_message(step: str, exc: BaseException) -> str:
+def unavailable_message(exc: BaseException) -> str:
     status = retry.status_of(exc)
     if status == 429:
         return "Mistral limite temporairement les requêtes (erreur 429)."
     if status:
-        service = "de transcription de Mistral" if step == "transcribe" else "de Mistral"
-        return f"Le service {service} est momentanément indisponible (erreur {status})."
+        return f"Le service de transcription de Mistral est momentanément indisponible (erreur {status})."
     return "Connexion à Mistral impossible (réseau coupé ou délai dépassé)."
 
 
 @dataclass(frozen=True)
 class Job:
-    kind: str  # "recording" | "subject"
+    kind: str  # "recording"
     target: int
     action: str
     chain: bool = True
@@ -136,11 +130,22 @@ class Pipeline:
             db.update_recording(rec["id"], status="interrupted")
             db.log(rec["id"], "L'app a redémarré pendant l'enregistrement : marqué interrompu.", "warning")
         db.run("UPDATE recordings SET drive_status = 'pending' WHERE drive_status = 'running'")
-        db.run("UPDATE recordings SET notion_status = 'pending' WHERE notion_status = 'running'")
-        resume = {
-            "finalizing": "finalize", "transcribing": "transcribe",
-            "transcribed": "format", "formatting": "format", "formatted": "publish", "publishing": "publish",
-        }
+        # Séances arrêtées à une étape qui n'existe plus (mise en forme, Notion) : leur transcription est déposée
+        # (ou l'est déjà) ; sans transcription, l'audio attend un nouveau lancement du traitement.
+        for rec in db.list_recordings_by_status("formatting", "formatted", "error"):
+            step = rec.get("error_step")
+            if rec["status"] != "error" or step in LEGACY_STEPS:
+                fields = ({"status": "transcribed"} if (recorder.recording_dir(rec["id"]) / "transcript.txt").exists()
+                          else {"status": "done", "drive_status": "done"} if rec.get("drive_transcription_id")
+                          else {"status": "uploaded"})
+                db.update_recording(rec["id"], **fields, error_step=None, error_message=None,
+                                    auto_retry_at=None, auto_retry_count=0)
+            elif step in ("publication", "publication Drive"):  # l'échec venait peut-être de Notion seul
+                if rec["drive_status"] in ("done", "skipped"):
+                    db.update_recording(rec["id"], status="done", error_step=None, error_message=None)
+                else:
+                    db.update_recording(rec["id"], error_step="publication")
+        resume = {"finalizing": "finalize", "transcribing": "transcribe", "transcribed": "publish", "publishing": "publish"}
         for rec in db.list_recordings_by_status(*resume):
             self.submit("recording", rec["id"], resume[rec["status"]])
 
@@ -172,6 +177,10 @@ class Pipeline:
             self.submit_due_retries()
         except Exception:  # noqa: BLE001
             log.exception("Essais automatiques impossibles")
+        try:
+            drive_pub.fetch_courses_if_due()  # cours rédigés par la tâche Claude
+        except Exception:  # noqa: BLE001
+            log.exception("Récupération des cours depuis Drive impossible")
 
     def submit_due_retries(self) -> list[int]:
         """Relance les étapes en échec dont l'essai automatique est arrivé à échéance."""
@@ -197,7 +206,7 @@ class Pipeline:
         if step not in AUTO_RETRY_STEPS or not retry.is_retryable(exc):
             return None
         attempt = ((db.get_recording(rid) or {}).get("auto_retry_count") or 0) + 1
-        message = unavailable_message(step, exc)
+        message = unavailable_message(exc)
         if attempt > AUTO_RETRY_MAX:
             db.update_recording(rid, auto_retry_at=None)
             return message + " Les essais automatiques sont arrêtés : cliquez sur « Réessayer » quand le service sera rétabli."
@@ -213,13 +222,6 @@ class Pipeline:
 
     # --- Exécution ----------------------------------------------------------------------------
     def _run(self, job: Job) -> None:
-        if job.kind == "subject":
-            self.current = {"subject_id": job.target, "step": job.action, "detail": "", "started": datetime.now()}
-            if job.action == "import_annotations":
-                self.import_subject_annotations(job.target)
-            elif job.action == "publish_drive":
-                self._guard_subject(job.target, lambda: drive_pub.publish_subject(job.target))
-            return
         rec = db.get_recording(job.target)
         if not rec:
             return
@@ -233,12 +235,7 @@ class Pipeline:
         handlers = {
             "finalize": self.step_finalize,
             "transcribe": self.step_transcribe,
-            "format": self.step_format,
-            "state": self.step_state,
-            "publish": lambda r: self.step_publish(r, ("drive", "notion")),
-            "publish_drive": lambda r: self.step_publish(r, ("drive",)),
-            "publish_notion": lambda r: self.step_publish(r, ("notion",)),
-            "import_annotations": self.step_import_annotations,
+            "publish": self.step_publish,
         }
         try:
             handlers[step](rid)
@@ -289,177 +286,25 @@ class Pipeline:
         db.update_recording(rid, status="transcribed")
         n = len(data.get("segments") or [])
         self._progress(rid, f"Transcription terminée ({n} segments).")
-        self._deposit_transcription(rid)
 
-    def _deposit_transcription(self, rid: int) -> None:
-        """Mode automatisation de Drive : la transcription part tout de suite, sans attendre la mise en forme."""
-        if not drive_pub.automation_mode() or not drive_pub.is_configured():
-            return
-        try:
-            drive_pub.deposit_inputs(rid)
-            self._progress(rid, "Transcription déposée dans Drive (dossier Transcriptions).")
-        except Exception as exc:  # noqa: BLE001 - nouvel essai à l'étape de publication
-            db.log(rid, f"Dépôt de la transcription dans Drive impossible pour l'instant : {exc} "
-                        "(nouvel essai à la publication).", "warning")
-
-    def _state_before(self, rid: int, subject: dict) -> str:
-        """État de matière *avant* cette séance, figé au premier passage (rend l'étape rejouable)."""
-        path = recorder.recording_dir(rid) / "state_before.md"
-        if path.exists():
-            return path.read_text(encoding="utf-8")
-        state = subjects.read_state(subject) or llm.empty_state(subject["name"])
-        path.write_text(state, encoding="utf-8")
-        return state
-
-    def step_format(self, rid: int) -> None:
-        rec = db.get_recording(rid)
-        subject = db.get_subject(rec["subject_id"])
-        data = transcribe.load_transcript(recorder.recording_dir(rid))
-        if data is None:
+    def step_publish(self, rid: int) -> None:
+        """Dépose la transcription (et les supports) dans Drive, où la tâche Claude rédige le cours."""
+        if not (recorder.recording_dir(rid) / "transcript.txt").exists():
             raise RuntimeError("Transcription absente : relancez d'abord la transcription.")
-        state = self._state_before(rid, subject)
-        db.update_recording(rid, status="formatting", error_step=None, error_message=None, state_note=None)
-        # Supports de cours (diapositives, PDF) : lus maintenant s'ils ne l'ont pas encore été.
-        used = supports.prepare(rid, on_progress=lambda m: self._progress(rid, m))
-        self._progress(rid, "Mise en forme du cours (LLM)" + (f" avec {len(used)} support(s) de cours…" if used else "…"))
-        meta = llm.session_meta(rec, subject)
-        if used:
-            meta["supports"] = [s["filename"] for s in used]
-        md, short = llm.format_course(data, state, meta, on_progress=lambda m: self._progress(rid, m),
-                                      support_docs=supports.documents(used) if used else None)
-        if subjects.course_path(rid).exists():
-            subjects.archive_versions(rid)  # l'ancienne version (et l'éventuelle version annotée) est conservée
-        subjects.course_path(rid).write_text(md, encoding="utf-8")
-        db.update_recording(rid, title=short, annotations_imported_at=None)
-        supports.mark_used([s["id"] for s in used])
-        recorder.write_meta(rid)
-        self._progress(rid, f"Cours rédigé : « {short} ».")
-        self._update_state_and_vocabulary(rid, strict=False)
-        db.update_recording(rid, status="formatted")
-
-    def step_state(self, rid: int) -> None:
-        """Relance seule de la mise à jour de l'état (appel LLM n°2) et des suggestions de vocabulaire."""
-        self._update_state_and_vocabulary(rid, strict=True)
-        rec = db.get_recording(rid)
-        if rec["status"] == "error" and rec.get("error_step") == STEP_LABELS["state"]:
-            self._settle(rid)  # revient à « terminé », « mis en forme » ou à l'erreur de publication éventuelle
-
-    def _update_state_and_vocabulary(self, rid: int, strict: bool) -> None:
-        rec = db.get_recording(rid)
-        subject = db.get_subject(rec["subject_id"])
-        course = subjects.read_course(rid)
-        if course is None:
-            raise RuntimeError("Cours absent : relancez d'abord la mise en forme.")
-        meta = llm.session_meta(rec, subject)
+        db.update_recording(rid, status="publishing", error_step=None, error_message=None,
+                            drive_status="running", drive_error=None)
+        self._progress(rid, "Dépôt de la transcription dans Drive…")
         try:
-            self._progress(rid, "Mise à jour de l'état de la matière (LLM)…")
-            new_state = llm.update_state(self._state_before(rid, subject), course, meta)
-            (recorder.recording_dir(rid) / "state_after.md").write_text(new_state, encoding="utf-8")
-            if self._owns_state(rec, subject):
-                subjects.write_state(subject, new_state)
-                db.update_subject(subject["id"], state_recording_id=rid)
-                db.update_recording(rid, state_note=None)
-            else:
-                db.update_recording(rid, state_note=(
-                    "L'état de la matière n'a pas été remplacé : une séance plus récente l'a déjà mis à jour. "
-                    "L'état calculé pour cette séance est dans state_after.md ; ajustez l'état à la main si besoin."))
-        except Exception as exc:  # noqa: BLE001
-            if strict:
-                raise
-            db.update_recording(rid, state_note=f"Échec de la mise à jour de l'état : {exc}")
-            db.log(rid, f"Mise à jour de l'état en échec (non bloquant) : {exc}", "warning")
-        try:
-            teachers = [t for t in f"{subject.get('teachers') or ''},{rec.get('teacher') or ''}".split(",") if t.strip()]
-            terms = llm.suggest_terms(course, subjects.get_vocabulary(subject), exclude=teachers)
-            if terms:
-                subjects.add_proposed_terms(subject["id"], terms)
-                self._progress(rid, f"{len(terms)} terme(s) de vocabulaire proposé(s) (à valider dans Matières).")
-        except Exception as exc:  # noqa: BLE001
-            db.log(rid, f"Suggestions de vocabulaire indisponibles : {exc}", "warning")
-
-    @staticmethod
-    def _owns_state(rec: dict, subject: dict) -> bool:
-        """La séance peut écrire l'état si aucune séance plus récente ne l'a déjà mis à jour."""
-        owner_id = subject.get("state_recording_id")
-        if owner_id in (None, rec["id"]):
-            return True
-        owner = db.get_recording(owner_id)
-        if not owner:
-            return True
-        key = lambda r: (r["session_date"] or "", r.get("event_start") or r["started_at"] or "", r["id"])  # noqa: E731
-        return key(rec) >= key(owner)
-
-    def step_publish(self, rid: int, destinations: tuple[str, ...]) -> None:
-        if subjects.read_course(rid) is None:
-            raise RuntimeError("Aucun cours mis en forme : relancez d'abord la mise en forme.")
-        db.update_recording(rid, status="publishing", error_step=None, error_message=None)
-        for dest in destinations:
-            db.update_recording(rid, **{f"{dest}_status": "running", f"{dest}_error": None})
-            self._progress(rid, f"Publication {dest.capitalize()}…")
-            try:
-                if dest == "drive":
-                    drive_pub.publish_recording(rid)
-                    try:  # les liens Drive peuvent maintenant être reportés dans Notion
-                        if db.get_recording(rid).get("notion_page_id"):
-                            notion_pub.update_links(rid)
-                    except Exception as exc:  # noqa: BLE001
-                        db.log(rid, f"Liens Drive non reportés dans Notion : {exc}", "warning")
-                else:
-                    notion_pub.publish_recording(rid)
-                db.update_recording(rid, **{f"{dest}_status": "done"})
-                self._progress(rid, f"Publication {dest.capitalize()} terminée.")
-            except PublishSkipped as exc:
-                db.update_recording(rid, **{f"{dest}_status": "skipped", f"{dest}_error": str(exc)})
-                db.log(rid, str(exc), "warning")
-            except Exception as exc:  # noqa: BLE001 - l'échec d'une destination ne bloque pas l'autre
-                log.exception("Publication %s en échec", dest)
-                db.update_recording(rid, **{f"{dest}_status": "error", f"{dest}_error": str(exc)[:1500]})
-                db.log(rid, f"Publication {dest} en échec : {exc}", "error")
-        self._settle(rid)
-
-    @staticmethod
-    def _settle(rid: int) -> None:
-        rec = db.get_recording(rid)
-        errors = [
-            f"{name} : {rec[f'{key}_error'] or 'erreur'}"
-            for key, name in (("drive", "Drive"), ("notion", "Notion"))
-            if rec[f"{key}_status"] == "error"
-        ]
-        if errors:
-            db.update_recording(rid, status="error", error_step="publication", error_message=" | ".join(errors))
-        elif all(rec[f"{k}_status"] in ("done", "skipped") for k in ("drive", "notion")):
-            db.update_recording(rid, status="done", error_step=None, error_message=None)
-        else:
-            db.update_recording(rid, status="formatted")
-
-    def step_import_annotations(self, rid: int) -> None:
-        self._progress(rid, "Import des annotations Notion…")
-        notion_pub.import_annotations(rid)
-        self._progress(rid, "Annotations importées (course_annote.md).")
-        if drive_pub.is_configured():
-            self.step_publish(rid, ("drive",))
-
-    def import_subject_annotations(self, subject_id: int) -> None:
-        recs = [r for r in db.list_recordings(subject_id) if r.get("notion_page_id")]
-        for rec in recs:
-            self.current = {"recording_id": rec["id"], "step": "import_annotations", "detail": "", "started": datetime.now()}
-            try:
-                notion_pub.import_annotations(rec["id"])
-                db.log(rec["id"], "Annotations importées (import par matière).")
-            except Exception as exc:  # noqa: BLE001
-                db.log(rec["id"], f"Import des annotations en échec : {exc}", "error")
-        if drive_pub.is_configured():
-            for rec in recs:
-                self.current = {"recording_id": rec["id"], "step": "publish_drive", "detail": "", "started": datetime.now()}
-                self.step_publish(rec["id"], ("drive",))
-
-    def _guard_subject(self, subject_id: int, fn) -> None:
-        try:
-            fn()
+            drive_pub.publish_recording(rid)
         except PublishSkipped as exc:
-            log.info("Publication de la matière %s ignorée : %s", subject_id, exc)
-        except Exception:  # noqa: BLE001
-            log.exception("Publication de la matière %s en échec", subject_id)
+            db.update_recording(rid, status="done", drive_status="skipped", drive_error=str(exc))
+            db.log(rid, str(exc), "warning")
+            return
+        except Exception as exc:
+            db.update_recording(rid, drive_status="error", drive_error=str(exc)[:1500])
+            raise
+        db.update_recording(rid, status="done", drive_status="done")
+        self._progress(rid, "Transcription déposée dans Drive : la tâche Claude rédigera le cours.")
 
     def describe(self) -> str:
         cur = self.current

@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pytest  # noqa: E402
 
 from app import config, db  # noqa: E402
+from app.publish import drive  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -32,6 +33,7 @@ def fresh_data():
         if f.exists():
             f.unlink()
     db.init_db()
+    drive.sync_state.update(at=0.0, error=None)
     yield
 
 

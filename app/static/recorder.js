@@ -444,7 +444,7 @@
 
   async function stop() {
     if (st.mode !== "recording" && st.mode !== "paused") return;
-    if (!confirm("Arrêter l'enregistrement ?\n\nL'audio sera préparé ; vous lancerez ensuite le traitement (transcription, mise en forme, publication) quand vous le voudrez.")) return;
+    if (!confirm("Arrêter l'enregistrement ?\n\nL'audio sera préparé ; vous lancerez ensuite le traitement (transcription, dépôt dans Drive) quand vous le voudrez.")) return;
     const rec = st.recorder;
     const stopped = new Promise((resolve) => rec.addEventListener("stop", resolve, { once: true }));
     st.elapsedBase = elapsed();
@@ -484,7 +484,7 @@
 
   // --- Support de cours (diapositives, PDF) -------------------------------------------------------------
   // Choisi avant l'enregistrement : envoyé dès sa création (ou avec le fichier audio importé).
-  // Choisi pendant l'enregistrement : envoyé aussitôt. Le serveur le lit ensuite (OCR) pour la mise en forme.
+  // Choisi pendant l'enregistrement : envoyé aussitôt (puis déposé dans Drive avec la transcription).
   const SUPPORT_EXT = [".pdf", ".pptx", ".docx"];
   const SUPPORT_MAX = 50 * 1024 * 1024;
   const SUPPORT_STATES = { staged: "joint au prochain enregistrement ou import", sending: "envoi…", sent: "envoyé ✓" };
@@ -573,7 +573,7 @@
     if (sel.error) { selectionProblem(sel.error, imp.status); return; }
     const staged = sup.items.filter((it) => it.state === "staged");
     const withSupports = staged.length ? `\nSupport du cours : ${staged.map((it) => it.file.name).join(", ")}` : "";
-    if (!confirm(`Importer « ${file.name} » pour ${sel.label} ?${withSupports}\n\nL'audio sera préparé ; vous lancerez ensuite le traitement (transcription, mise en forme, publication).`)) {
+    if (!confirm(`Importer « ${file.name} » pour ${sel.label} ?${withSupports}\n\nL'audio sera préparé ; vous lancerez ensuite le traitement (transcription, dépôt dans Drive).`)) {
       imp.file.value = "";
       return;
     }

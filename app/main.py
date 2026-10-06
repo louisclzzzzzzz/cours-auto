@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import calendar_ics, config, db, supports
+from . import calendar_ics, config, db
 from .pipeline import pipeline
 from .routes import courses, record, recordings, settings, subjects
 from .web import STATIC_DIR
@@ -23,7 +23,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 async def lifespan(_app: FastAPI):
     db.init_db()
     pipeline.start()
-    supports.resume_pending()  # supports de cours dont la lecture a été interrompue
     calendar_ics.refresh_in_background()  # rafraîchissement de l'EDT à l'ouverture de l'app
     yield
     pipeline.stop()

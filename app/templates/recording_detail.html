@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "macros.html" import session_name %}
+{% from "macros.html" import session_name, delete_form %}
 {% block title %}{{ session_name(rec) }}{% endblock %}
 {% block content %}
 <div class="page-head">
@@ -48,13 +48,13 @@
     <div class="field" style="margin-top:0.85rem"><label for="m-title">Titre court</label><input type="text" id="m-title" name="title" value="{{ rec.title or '' }}"></div>
     <div class="field"><label for="m-teacher">Enseignant</label><input type="text" id="m-teacher" name="teacher" value="{{ rec.teacher or '' }}"></div>
     <button class="primary">Enregistrer</button>
-    <p class="small muted">Republiez ensuite (section ci-dessous) pour mettre à jour Drive et Notion.</p>
+    <p class="small muted">Si la transcription est déjà dans Drive, relancez ensuite son dépôt (section ci-dessous) pour la renommer.</p>
   </form>
 </details>
 
 <details class="card disclosure" id="avance">
   <summary>Relancer une étape ou supprimer</summary>
-  <p class="small muted">Chaque étape repart des fichiers conservés sur le disque ; à partir de la transcription, elle enchaîne les suivantes.
+  <p class="small muted">Chaque étape repart des fichiers conservés sur le disque ; la transcription enchaîne le dépôt dans Drive.
     Après l'audio, le traitement se lance à la main.</p>
   <ul class="action-list">
     <li>
@@ -70,49 +70,23 @@
       </form>
     </li>
     <li>
-      <div><strong>Transcription</strong><p class="small muted">Nouvel envoi à Voxtral (avec le vocabulaire de la matière).</p></div>
+      <div><strong>Transcription</strong><p class="small muted">Nouvel envoi à Voxtral (avec le vocabulaire de la matière), puis dépôt dans Drive.</p></div>
       <form method="post" action="/enregistrements/{{ rec.id }}/action">
         <input type="hidden" name="action" value="transcribe">
         <button {{ 'disabled' if busy or not files.audio }}>Relancer</button>
       </form>
     </li>
     <li>
-      <form method="post" action="/enregistrements/{{ rec.id }}/action" class="stack" style="width:100%"
-            {% if rec.notion_page_id %}onsubmit="return this.notion_mode.value !== 'overwrite' || confirm('Écraser la page Notion ? Toutes vos annotations sur cette page seront PERDUES.')"{% endif %}>
-        <input type="hidden" name="action" value="format">
-        <div class="row" style="justify-content:space-between">
-          <div><strong>Mise en forme</strong><p class="small muted">Nouvelle rédaction du cours par le LLM.</p></div>
-          <button {{ 'disabled' if busy or not files.transcript }}>Relancer</button>
-        </div>
-        {% if rec.notion_page_id %}
-        <fieldset class="bare small">
-          <legend>Déjà publiée dans Notion (peut-être annotée) : pour la nouvelle version…</legend>
-          <label class="check"><input type="radio" name="notion_mode" value="new_version" checked> créer une nouvelle page « (v{{ (rec.notion_version or 1) + 1 }}) » et garder l'ancienne (recommandé)</label>
-          <label class="check"><input type="radio" name="notion_mode" value="overwrite"> écraser la page existante (annotations perdues)</label>
-        </fieldset>
-        {% endif %}
-      </form>
-    </li>
-    <li>
-      <div><strong>Mémoire de la matière</strong><p class="small muted">Met à jour l'état de la matière et les termes proposés.</p></div>
-      <form method="post" action="/enregistrements/{{ rec.id }}/action">
-        <input type="hidden" name="action" value="state">
-        <button {{ 'disabled' if busy or not files.course }}>Relancer</button>
-      </form>
-    </li>
-    <li>
-      <div><strong>Publication</strong><p class="small muted">Renvoie le cours sur Drive et Notion (sans écraser vos annotations).</p></div>
+      <div><strong>Dépôt Drive</strong><p class="small muted">Redépose la transcription et les supports dans les dossiers
+        « Transcriptions » et « Supports » de la matière (même fichier, renommé si besoin).</p></div>
       <form method="post" action="/enregistrements/{{ rec.id }}/action">
         <input type="hidden" name="action" value="publish">
-        <button {{ 'disabled' if busy or not files.course }}>Republier</button>
+        <button {{ 'disabled' if busy or not files.transcript }}>Redéposer</button>
       </form>
     </li>
   </ul>
   <div class="danger-zone">
-    <form method="post" action="/enregistrements/{{ rec.id }}/delete"
-          onsubmit="return confirm('Supprimer définitivement cet enregistrement et ses fichiers locaux (audio, transcription, cours) ? Les pages Notion et fichiers Drive déjà publiés ne seront pas supprimés.')">
-      <button class="danger" {{ 'disabled' if busy }}>Supprimer l'enregistrement</button>
-    </form>
+    {{ delete_form(rec, label="Supprimer l'enregistrement") }}
   </div>
 </details>
 

@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import calendar_ics, db, pipeline as pl, recorder, subjects
-from app.publish import notion
+from app.publish import drive
 from app.routes import recordings as rec_routes
 from app.textutils import fmt_when
 from app.web import redirect, static_url
@@ -32,7 +32,7 @@ def done_recording(sid: int, **fields) -> int:
     subjects.course_path(rid).parent.mkdir(parents=True, exist_ok=True)
     subjects.course_path(rid).write_text("# CM 1 – Graphes\n\n## Intro\n\nTexte.", encoding="utf-8")
     db.update_recording(rid, **{"status": "done", "title": "Graphes", "drive_status": "done",
-                                "notion_status": "done", **fields})
+                                "drive_md_id": "f1", "drive_md_url": "https://drive.example/f1", **fields})
     return rid
 
 
@@ -73,11 +73,10 @@ def test_courses_page_is_a_list_with_unmapped_summaries(client, ics_bytes):
     calendar_ics.save_calendar(ics_bytes, "file")
     sid = subjects.create_subject("Graphes")
     done_recording(sid)
-    db.update_subject(sid, proposed_terms=db.dumps(["Dijkstra", "Kruskal"]))
     page = client.get("/cours").text
     assert 'class="rows card flush subject-rows"' in page and 'class="grid"' not in page
     assert f'data-href="/cours/{sid}"' in page and "Dernière séance : CM 1 – Graphes" in page
-    assert "2 termes à valider" in page
+    assert "Récupérer depuis Drive" in page
     assert 'id="intitules"' in page and "Algorithmique avancée CM" in page
     # Association depuis la liste : retour sur la section, message conservé avant l'ancre.
     r = client.post("/matieres/associer", data={"summary": "Algorithmique avancée CM", "subject_id": str(sid)},
@@ -87,22 +86,11 @@ def test_courses_page_is_a_list_with_unmapped_summaries(client, ics_bytes):
 
 
 def test_redirect_keeps_anchor_after_message():
-    loc = redirect("/parametres#notion", "OK", "err").headers["location"]
+    loc = redirect("/parametres#drive", "OK", "err").headers["location"]
     parsed = urlparse(loc)
-    assert parsed.path == "/parametres" and parsed.fragment == "notion"
+    assert parsed.path == "/parametres" and parsed.fragment == "drive"
     assert parse_qs(parsed.query) == {"msg": ["OK"], "level": ["err"]}
     assert redirect("/cours").headers["location"] == "/cours"
-
-
-def test_validating_proposed_terms_discards_unchecked(client):
-    sid = subjects.create_subject("Graphes")
-    db.update_subject(sid, proposed_terms=db.dumps(["Dijkstra", "Kruskal", "truc"]))
-    r = client.post(f"/matieres/{sid}/propositions", data={"accepted": ["Dijkstra", "Kruskal"], "decision": "accept"},
-                    follow_redirects=False)
-    assert r.headers["location"].endswith("#vocabulaire")
-    subject = db.get_subject(sid)
-    assert subjects.get_vocabulary(subject) == ["Dijkstra", "Kruskal"]
-    assert subjects.get_proposed_terms(subject) == []  # « truc », décoché, est écarté
 
 
 def test_progress_steps_and_retry_action():
@@ -117,12 +105,16 @@ def test_progress_steps_and_retry_action():
     assert steps(status="transcribing") == ["done", "current", "todo", "todo"]
     assert steps(status="error", error_step="transcription") == ["done", "error", "todo", "todo"]
     assert rec_routes.retry_action(db.get_recording(rid)) == "transcribe"
-    db.update_recording(rid, status="error", error_step="publication", drive_status="done", notion_status="error")
-    assert rec_routes.retry_action(db.get_recording(rid)) == "publish_notion"
-    db.update_recording(rid, drive_status="error")
+    files["transcript"] = True
+    assert steps(status="publishing") == ["done", "done", "current", "todo"]
+    assert steps(status="error", error_step="publication", drive_status="error") == ["done", "done", "error", "todo"]
     assert rec_routes.retry_action(db.get_recording(rid)) == "publish"
-    db.update_recording(rid, error_step="état de matière")
-    assert rec_routes.retry_action(db.get_recording(rid)) == "state"
+    # Transcription déposée : le cours attend la tâche Claude, puis il est récupéré depuis Drive.
+    waiting = rec_routes.progress_steps(db.get_recording(rid) | {"status": "done", "drive_status": "done"}, files)
+    assert [s["state"] for s in waiting] == ["done", "done", "done", "todo"]
+    assert waiting[3]["detail"] == "en attente de la tâche Claude"
+    files["course"] = True
+    assert steps(status="done", drive_status="done") == ["done"] * 4
     db.update_recording(rid, status="interrupted", error_step=None)
     assert rec_routes.retry_action(db.get_recording(rid)) == "finalize"
     assert steps(status="interrupted")[0] == "warn"
@@ -132,10 +124,10 @@ def test_progress_steps_and_retry_action():
 
 def test_detail_page_retry_button_and_polling(client):
     sid = subjects.create_subject("Graphes")
-    rid = done_recording(sid, status="error", error_step="publication", notion_status="error",
-                         error_message="Notion : indisponible")
+    rid = done_recording(sid, status="error", error_step="publication", drive_status="error",
+                         error_message="Drive : indisponible")
     page = client.get(f"/enregistrements/{rid}").text
-    assert 'name="action" value="publish_notion"' in page and "Réessayer" in page
+    assert 'name="action" value="publish"' in page and "Réessayer" in page
     assert 'hx-trigger="every 3s"' not in page  # rien ne tourne : pas de rechargement automatique
     assert "Voir le cours" in page
     db.update_recording(rid, status="transcribing")
@@ -164,27 +156,67 @@ def test_audio_ready_waits_for_manual_launch(client, monkeypatch):
     monkeypatch.setattr(pl.pipeline, "submit", lambda kind, target, action, chain=True: submitted.append((action, chain)))
     r = client.post(f"/enregistrements/{rid}/action", data={"action": "transcribe", "back": "/"}, follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"].startswith("/?msg=Traitement+lanc")
-    assert submitted == [("transcribe", True)]  # transcription → mise en forme → publication
+    assert submitted == [("transcribe", True)]  # transcription → dépôt dans Drive
 
     # En file derrière un autre traitement : plus de bouton, badge « En file d'attente », suivi en direct.
     monkeypatch.setattr(pl.pipeline, "is_active", lambda r: r == rid)
     latest = client.get("/fragments/latest").text
-    assert "En file d&#39;attente" in latest and "Lancer le traitement" not in latest and "every 4s" in latest
+    assert "En file d'attente" in latest and "Lancer le traitement" not in latest and "every 4s" in latest
 
 
 def test_worker_indicator_is_empty_when_idle(client):
     assert client.get("/fragments/worker").text.strip() == ""
 
 
-def test_notion_settings_save_and_check_in_one_step(client, monkeypatch):
-    monkeypatch.setattr(notion, "test_connection", lambda: (False, "Page racine introuvable : partagez-la."))
-    r = client.post("/parametres/notion", data={"notion_root": "9f1c2d3e4b5a60718293a4b5c6d7e8f9"}, follow_redirects=False)
-    parsed = urlparse(r.headers["location"])
-    assert parsed.fragment == "notion" and parse_qs(parsed.query)["level"] == ["err"]
-    assert parse_qs(parsed.query)["msg"][0].startswith("Page enregistrée. Page racine introuvable")
-    assert db.get_setting("notion_root") == "9f1c2d3e4b5a60718293a4b5c6d7e8f9"
+def test_waiting_for_claude_then_course_ready(client, monkeypatch):
+    sid = subjects.create_subject("Graphes")
+    rid = done_recording(sid, drive_md_id=None, drive_md_url=None, drive_transcription_id="t1",
+                         drive_transcription_url="https://drive.example/t1")
+    subjects.course_path(rid).unlink()
+    assert "En attente du cours" in client.get("/enregistrements").text
+    page = client.get(f"/enregistrements/{rid}").text
+    assert "Transcription déposée dans Drive" in page and "Vérifier maintenant" in page and "Voir le cours" not in page
+
+    def fetch(subject_id=None):
+        subjects.course_path(rid).write_text("# CM 1 – Graphes\n\nTexte.", encoding="utf-8")
+        db.update_recording(rid, drive_md_id="f2", drive_md_url="https://drive.example/f2")
+        return [db.get_recording(rid)]
+
+    monkeypatch.setattr(drive, "fetch_courses", fetch)
+    r = client.post("/cours/drive", data={"subject_id": str(sid), "back": f"/enregistrements/{rid}"}, follow_redirects=False)
+    location = urlparse(r.headers["location"])
+    assert location.path == f"/enregistrements/{rid}"
+    assert parse_qs(location.query)["msg"] == ["1 cours récupéré depuis Drive : Graphes CM 1 – Graphes."]
+    assert "Cours prêt" in client.get("/enregistrements").text
+    page = client.get(f"/enregistrements/{rid}").text
+    assert "Voir le cours" in page and "https://drive.example/f2" in page
+    preview = client.get(f"/fragments/cours/seance/{rid}").text
+    assert "Ouvrir dans Drive" in preview and "Notion" not in preview
+
+
+def test_fetch_errors_are_shown(client, monkeypatch):
+    def fail(subject_id=None):
+        drive.sync_state["error"] = drive.READ_MISSING
+        raise drive.DriveReadError(drive.READ_MISSING)
+
+    monkeypatch.setattr(drive, "fetch_courses", fail)
+    r = client.post("/cours/drive", follow_redirects=False)
+    query = parse_qs(urlparse(r.headers["location"]).query)
+    assert query["level"] == ["err"] and "drive.readonly" in query["msg"][0]
+    assert "Cours non récupérés depuis Drive" in client.get("/cours").text
+
+
+def test_settings_page_without_notion_and_llm(client, monkeypatch):
     page = client.get("/parametres").text
-    assert "Enregistrer et vérifier" in page and "/parametres/notion/test" not in page
+    assert "Notion" not in page and "mise en forme" not in page.lower() and "Modèle de transcription" in page
+    monkeypatch.setattr(drive, "connection_status", lambda force=False: {
+        "configured": True, "connected": True, "can_read": False, "message": "Connecté (moi@example.com)"})
+    page = client.get("/parametres").text
+    assert "Lecture des cours non autorisée" in page and "drive.readonly" in page
+    r = client.post("/parametres/modeles", data={"transcription_model": "voxtral-mini-latest",
+                                                 "transcription_language": "fr", "audio_bitrate": "64k"},
+                    follow_redirects=False)
+    assert "level=err" not in r.headers["location"] and db.get_setting("audio_bitrate") == "64k"
 
 
 def test_fmt_when():
@@ -210,3 +242,64 @@ def test_quit_button_and_version(client, monkeypatch):
     assert r.status_code == 200 and "Cours auto est arrêté" in r.text and stopped == [True]
     # Comme toute action, l'arrêt est refusé depuis un autre site.
     assert client.post("/quitter", headers={"Origin": "https://evil.example"}).status_code == 403
+
+
+def _course(rid: int, md: str) -> None:
+    subjects.course_path(rid).parent.mkdir(parents=True, exist_ok=True)
+    subjects.course_path(rid).write_text(md, encoding="utf-8")
+
+
+def test_deleting_a_false_start_renumbers_following_sessions(client):
+    sid = subjects.create_subject("Graphes")
+    first = done_recording(sid)  # CM 1
+    false_start = recorder.create_recording(subject_id=sid, course_type="CM", session_date="2026-09-28")  # CM 2
+    db.update_recording(false_start, status="uploaded", duration_seconds=240)
+    real = recorder.create_recording(subject_id=sid, course_type="CM", session_date="2026-09-28")  # CM 3
+    td = recorder.create_recording(subject_id=sid, course_type="TD", session_date="2026-09-29")  # TD 1
+    md = "# CM 3 – Arbres\n\n*Graphes — CM 3 du 28 septembre 2026 — Enseignant : X*\n\n## Intro\n\nTexte."
+    _course(real, md)
+    (recorder.recording_dir(real) / "transcript.txt").write_text(
+        "# Transcription — Graphes — CM 3 — 2026-09-28\n\n[00:00] Bonjour.\n", encoding="utf-8")
+    db.update_recording(real, status="done", title="Arbres", drive_transcription_id="t3")
+    assert db.get_recording(real)["session_number"] == 3
+
+    # Corbeille dans l'Historique et sur l'accueil ; entrée du menu ⋯ dans la page « Cours ».
+    assert f'action="/enregistrements/{false_start}/delete"' in client.get("/enregistrements").text
+    assert f'action="/enregistrements/{false_start}/delete"' in client.get("/fragments/latest").text
+    assert "Supprimer la séance…" in client.get(f"/fragments/cours/seance/{real}").text
+
+    r = client.post(f"/enregistrements/{false_start}/delete", data={"back": "/enregistrements"}, follow_redirects=False)
+    assert r.status_code == 303
+    location = urlparse(r.headers["location"])
+    assert location.path == "/enregistrements"
+    msg = parse_qs(location.query)["msg"][0]
+    assert "Graphes — CM 2 supprimé." in msg and "CM 3 → CM 2" in msg and "Relancez le dépôt Drive de CM 2" in msg
+
+    assert db.get_recording(false_start) is None and not recorder.recording_dir(false_start).exists()
+    rec = db.get_recording(real)
+    assert rec["session_number"] == 2
+    new_md = subjects.read_course(real)
+    assert new_md.startswith("# CM 2 – Arbres\n\n*Graphes — CM 2 du 28 septembre 2026")
+    transcript = (recorder.recording_dir(real) / "transcript.txt").read_text(encoding="utf-8")
+    assert transcript.startswith("# Transcription — Graphes — CM 2 — 2026-09-28\n")
+    assert '"session_number": 2' in (recorder.recording_dir(real) / "meta.json").read_text(encoding="utf-8")
+    assert db.get_recording(first)["session_number"] == 1 and db.get_recording(td)["session_number"] == 1
+    assert db.next_session_number(sid, "CM") == 3
+
+
+def test_deletion_keeps_numbers_when_duplicated_and_waits_for_processing(client):
+    sid = subjects.create_subject("Graphes")
+    a = recorder.create_recording(subject_id=sid, course_type="CM", session_date="2026-09-21")  # CM 1
+    b = recorder.create_recording(subject_id=sid, course_type="CM", session_date="2026-09-21")  # CM 2
+    c = recorder.create_recording(subject_id=sid, course_type="CM", session_date="2026-09-28")  # CM 3
+    db.update_recording(b, session_number=1)  # deux « CM 1 » : en supprimer un ne laisse aucun trou
+    client.post(f"/enregistrements/{b}/delete")
+    assert db.get_recording(c)["session_number"] == 3 and db.get_recording(a)["session_number"] == 1
+
+    # Séance suivante en plein traitement : son numéro ne peut pas changer maintenant.
+    db.update_recording(c, status="transcribing")
+    r = client.post(f"/enregistrements/{a}/delete", data={"back": "/enregistrements"}, follow_redirects=False)
+    assert parse_qs(urlparse(r.headers["location"]).query)["level"] == ["err"]
+    assert db.get_recording(a) and db.get_recording(c)["session_number"] == 3
+    # Elle-même en traitement : pas de corbeille active.
+    assert "Traitement en cours : suppression impossible" in client.get("/enregistrements").text

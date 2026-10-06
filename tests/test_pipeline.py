@@ -1,40 +1,25 @@
-"""Orchestration : enchaînement des étapes, statuts, sous-statuts de publication, état de matière."""
+"""Orchestration : enchaînement des étapes (audio → transcription → dépôt Drive), statuts, reprise au démarrage."""
 
 import json
 
 import pytest
 
-from app import db, llm, pipeline as pl, recorder, subjects, transcribe
+from app import db, pipeline as pl, recorder, subjects, transcribe
 from app.publish import PublishSkipped
 
 
 @pytest.fixture
 def fakes(monkeypatch):
-    calls = {"drive": 0, "notion": 0, "state_inputs": []}
+    calls = {"drive": 0}
 
     monkeypatch.setattr(recorder, "finalize_audio", lambda rid: (recorder.audio_path(rid).write_bytes(b"mp3"), 3600.0)[1])
     monkeypatch.setattr(transcribe, "transcribe_file", lambda path, vocab, rid=None: {
         "text": "t", "segments": [{"text": "Bonjour, aujourd'hui les graphes.", "start": 0, "end": 3, "speaker_id": "speaker_1"}]})
 
-    def fake_format(data, state, meta, on_progress=None, support_docs=None):
-        return llm.finalize_course(f"# Séance {meta['numero']}\n\n## Contenu\n\nTexte.", meta)
-
-    def fake_state(old, course, meta):
-        calls["state_inputs"].append(old)
-        return old.rstrip() + f"\n- {meta['type']} {meta['numero']}\n"
-
-    monkeypatch.setattr(llm, "format_course", fake_format)
-    monkeypatch.setattr(llm, "update_state", fake_state)
-    monkeypatch.setattr(llm, "suggest_terms", lambda course, vocab, exclude=(): ["Dijkstra"])
-
     def drive(rid):
         calls["drive"] += 1
 
-    def notion(rid):
-        calls["notion"] += 1
-
     monkeypatch.setattr(pl.drive_pub, "publish_recording", drive)
-    monkeypatch.setattr(pl.notion_pub, "publish_recording", notion)
     return calls
 
 
@@ -52,7 +37,7 @@ def finalize_then_launch(p: pl.Pipeline, rid: int) -> None:
     p._run(pl.Job("recording", rid, "transcribe"))
 
 
-def test_full_chain_and_state(fakes):
+def test_full_chain(fakes):
     sid = subjects.create_subject("Graphes")
     p = pl.Pipeline()
     r1 = new_rec(sid)
@@ -63,33 +48,16 @@ def test_full_chain_and_state(fakes):
     assert not (recorder.recording_dir(r1) / "transcript.json").exists() and fakes["drive"] == 0
     p._run(pl.Job("recording", r1, "transcribe"))
     rec = db.get_recording(r1)
-    assert rec["status"] == "done", rec["error_message"]
-    assert rec["title"] == "Séance 1" and rec["duration_seconds"] == 3600.0
+    assert rec["status"] == "done" and rec["drive_status"] == "done", rec["error_message"]
     folder = recorder.recording_dir(r1)
     assert json.loads((folder / "transcript.json").read_text())["segments"]
-    assert "L1 :" in (folder / "transcript.txt").read_text()
-    assert subjects.course_path(r1).read_text().startswith("# CM 1 – Séance 1")
-    state = subjects.read_state(db.get_subject(sid))
-    assert "- CM 1" in state and db.get_subject(sid)["state_recording_id"] == r1
-    assert subjects.get_proposed_terms(db.get_subject(sid)) == ["Dijkstra"]
-    assert fakes["drive"] == 1 and fakes["notion"] == 1
-
-    # Séance suivante : l'état de départ est celui produit par la séance 1.
-    r2 = new_rec(sid, "2026-09-28")
-    finalize_then_launch(p, r2)
-    assert "- CM 1" in fakes["state_inputs"][-1]
-    assert "- CM 2" in subjects.read_state(db.get_subject(sid))
-
-    # Relancer la mise en forme de la séance 1 : état d'entrée identique (state_before figé),
-    # et l'état de la matière n'est pas écrasé car la séance 2, plus récente, l'a déjà mis à jour.
-    p._run(pl.Job("recording", r1, "format"))
-    assert fakes["state_inputs"][-1] == fakes["state_inputs"][0]
-    assert "- CM 2" in subjects.read_state(db.get_subject(sid))
-    assert "plus récente" in db.get_recording(r1)["state_note"]
-    assert list((recorder.recording_dir(r1) / "versions").glob("course_*.md"))
+    text = (folder / "transcript.txt").read_text()
+    assert text.startswith("# Transcription — Graphes — CM 1 — 2026-09-21") and "L1 :" in text
+    # Plus de mise en forme locale : le cours sera rédigé par la tâche Claude, puis récupéré depuis Drive.
+    assert not subjects.course_path(r1).exists() and fakes["drive"] == 1
 
 
-def test_publication_substatuses(fakes, monkeypatch):
+def test_drive_not_configured_ends_after_transcription(fakes, monkeypatch):
     sid = subjects.create_subject("Réseaux")
     p = pl.Pipeline()
     rid = new_rec(sid)
@@ -97,21 +65,30 @@ def test_publication_substatuses(fakes, monkeypatch):
     def drive_skip(r):
         raise PublishSkipped("Drive non configuré")
 
-    def notion_fail(r):
-        raise RuntimeError("Notion indisponible")
-
     monkeypatch.setattr(pl.drive_pub, "publish_recording", drive_skip)
-    monkeypatch.setattr(pl.notion_pub, "publish_recording", notion_fail)
+    finalize_then_launch(p, rid)
+    rec = db.get_recording(rid)
+    assert rec["status"] == "done" and rec["drive_status"] == "skipped" and rec["drive_error"] == "Drive non configuré"
+
+
+def test_drive_failure_then_redeposit(fakes, monkeypatch):
+    sid = subjects.create_subject("Réseaux")
+    p = pl.Pipeline()
+    rid = new_rec(sid)
+
+    def drive_fail(r):
+        raise RuntimeError("Drive indisponible")
+
+    monkeypatch.setattr(pl.drive_pub, "publish_recording", drive_fail)
     finalize_then_launch(p, rid)
     rec = db.get_recording(rid)
     assert rec["status"] == "error" and rec["error_step"] == "publication"
-    assert rec["drive_status"] == "skipped" and rec["notion_status"] == "error"
-    assert "Notion indisponible" in rec["notion_error"]
-    # L'échec de Notion n'a pas empêché le cours d'exister ; on relance Notion seul.
-    monkeypatch.setattr(pl.notion_pub, "publish_recording", lambda r: None)
-    p._run(pl.Job("recording", rid, "publish_notion", chain=False))
+    assert rec["drive_status"] == "error" and "indisponible" in rec["drive_error"]
+    # La transcription est conservée : on relance seulement le dépôt.
+    monkeypatch.setattr(pl.drive_pub, "publish_recording", lambda r: None)
+    p._run(pl.Job("recording", rid, "publish", chain=False))
     rec = db.get_recording(rid)
-    assert rec["status"] == "done" and rec["notion_status"] == "done" and rec["drive_status"] == "skipped"
+    assert rec["status"] == "done" and rec["drive_status"] == "done" and rec["error_step"] is None
 
 
 def test_error_step_and_restart(fakes, monkeypatch):
@@ -148,17 +125,31 @@ def test_recover_after_restart(fakes):
     assert not p.is_active(waiting) and db.get_recording(waiting)["status"] == "uploaded"
 
 
-def test_format_sets_notion_pending_action_via_route(fakes):
-    from fastapi.testclient import TestClient
-
-    from app.main import app
-
-    sid = subjects.create_subject("Compil")
-    rid = new_rec(sid)
-    db.update_recording(rid, status="done", notion_page_id="p1")
-    with TestClient(app) as client:
-        pl.pipeline.stop()  # on ne veut pas que le thread traite la tâche pendant le test
-        r = client.post(f"/enregistrements/{rid}/action", data={"action": "format", "notion_mode": "overwrite"},
-                        follow_redirects=False)
-        assert r.status_code == 303
-    assert db.get_recording(rid)["notion_pending_action"] == "overwrite"
+def test_recover_moves_legacy_steps_to_drive_deposit(fakes):
+    """Séances laissées par l'ancienne version (mise en forme Mistral, Notion) : reprise au dépôt Drive."""
+    sid = subjects.create_subject("Algo")
+    formatted = new_rec(sid)
+    db.update_recording(formatted, status="formatted")
+    format_error = new_rec(sid)
+    db.update_recording(format_error, status="error", error_step="mise en forme", error_message="LLM")
+    for rid in (formatted, format_error):
+        (recorder.recording_dir(rid) / "transcript.txt").write_text("# Transcription\n", encoding="utf-8")
+    already_in_drive = new_rec(sid)  # transcription locale perdue, mais déjà déposée dans Drive
+    db.update_recording(already_in_drive, status="error", error_step="mise en forme", drive_transcription_id="t1")
+    no_transcript = new_rec(sid)
+    db.update_recording(no_transcript, status="error", error_step="mise en forme")
+    notion_only = new_rec(sid)
+    db.update_recording(notion_only, status="error", error_step="publication", drive_status="done",
+                        error_message="Notion : indisponible")
+    drive_error = new_rec(sid)
+    db.update_recording(drive_error, status="error", error_step="publication Drive", drive_status="error")
+    p = pl.Pipeline()
+    p.recover()
+    for rid in (formatted, format_error):
+        assert db.get_recording(rid)["status"] == "transcribed" and ("recording", rid, "publish") in p._pending
+    assert db.get_recording(already_in_drive)["status"] == "done" and db.get_recording(already_in_drive)["drive_status"] == "done"
+    assert db.get_recording(no_transcript)["status"] == "uploaded"  # traitement à relancer à la main
+    assert not p.is_active(already_in_drive) and not p.is_active(no_transcript)
+    assert db.get_recording(notion_only)["status"] == "done" and db.get_recording(notion_only)["error_step"] is None
+    rec = db.get_recording(drive_error)
+    assert rec["status"] == "error" and rec["error_step"] == "publication"  # « Réessayer » relance le dépôt

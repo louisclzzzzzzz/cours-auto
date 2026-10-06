@@ -9,13 +9,12 @@
       </span>
       <span class="step-label">{{ st.label }}<span class="visually-hidden"> :
         {{ {'done': 'terminé', 'current': 'en cours', 'error': 'en échec', 'warn': 'interrompu', 'todo': 'à venir'}[st.state] }}</span></span>
-      {% if st.label == 'Publication' %}
+      {% if loop.index == 3 and rec.drive_status in ('done', 'skipped') %}
         <span class="step-detail">
-          {% for t in targets %}{% if not loop.first %} · {% endif %}
-            {%- if t.url and t.status == 'done' %}<a class="ext" href="{{ t.url }}" target="_blank" rel="noopener">{{ t.name }}</a>{% else %}{{ t.name }}{% endif %}
-            {{ t.status|sub_label }}
-          {%- endfor %}
-        </span>
+          {%- if rec.drive_transcription_url and rec.drive_status == 'done' %}<a class="ext" href="{{ rec.drive_transcription_url }}" target="_blank" rel="noopener">Transcription</a>
+          {%- else %}{{ rec.drive_status|sub_label }}{% endif %}</span>
+      {% elif loop.index == 4 and rec.drive_md_url and st.state == 'done' %}
+        <span class="step-detail"><a class="ext" href="{{ rec.drive_md_url }}" target="_blank" rel="noopener">Drive</a></span>
       {% elif st.detail %}<span class="step-detail">{{ st.detail }}</span>{% endif %}
     </li>
     {% endfor %}
@@ -37,7 +36,7 @@
   {% elif rec.status == 'uploaded' %}
     <div class="alert info">
       <div><p class="alert-title">Audio prêt : traitement à lancer</p>
-        <p class="small">Écoutez l'audio ou ajoutez le support de cours si besoin, puis lancez la transcription, la mise en forme et la publication.</p></div>
+        <p class="small">Écoutez l'audio ou ajoutez le support de cours si besoin, puis lancez la transcription et son dépôt dans Drive.</p></div>
       <form method="post" action="/enregistrements/{{ rec.id }}/action" class="inline-form">
         <input type="hidden" name="action" value="transcribe">
         <button class="primary"><span aria-hidden="true">▶</span> Lancer le traitement</button>
@@ -54,17 +53,26 @@
       </form>
       {% endif %}
     </div>
+  {% elif rec.status == 'done' and files.course %}
+    <p class="status-line"><span aria-hidden="true">✅</span> Le cours est prêt.</p>
+  {% elif rec.status == 'done' and rec.drive_status == 'done' %}
+    <div class="alert info">
+      <div><p class="alert-title">Transcription déposée dans Drive</p>
+        <p class="small">La tâche Claude rédigera le cours ; il apparaîtra ici tout seul (vérification toutes les 10 minutes).</p></div>
+      <form method="post" action="/cours/drive" class="inline-form">
+        <input type="hidden" name="subject_id" value="{{ rec.subject_id }}"><input type="hidden" name="back" value="/enregistrements/{{ rec.id }}">
+        <button>Vérifier maintenant</button>
+      </form>
+    </div>
   {% elif rec.status == 'done' %}
-    <p class="status-line"><span aria-hidden="true">✅</span> Traitement terminé : le cours est prêt.</p>
+    <p class="status-line"><span aria-hidden="true">✅</span> Transcription terminée.</p>
   {% endif %}
 
-  {% for t in targets if t.status == 'skipped' and t.error %}<p class="small muted">{{ t.name }} : {{ t.error }}</p>{% endfor %}
-  {% if rec.state_note %}<p class="notice small">{{ rec.state_note }}</p>{% endif %}
+  {% if rec.drive_status == 'skipped' and rec.drive_error %}<p class="small muted">Drive : {{ rec.drive_error }}</p>{% endif %}
 
-  {% if files.course or rec.notion_page_url %}
+  {% if files.course %}
   <div class="actions">
-    {% if files.course %}<a class="btn primary" href="/cours/{{ rec.subject_id }}?seance={{ rec.id }}">Voir le cours</a>{% endif %}
-    {% if rec.notion_page_url %}<a class="btn ext" href="{{ rec.notion_page_url }}" target="_blank" rel="noopener">Ouvrir dans Notion</a>{% endif %}
+    <a class="btn primary" href="/cours/{{ rec.subject_id }}?seance={{ rec.id }}">Voir le cours</a>
   </div>
   {% endif %}
 </div>

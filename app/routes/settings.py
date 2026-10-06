@@ -1,4 +1,4 @@
-"""Page « Paramètres » : emploi du temps, Google Drive, Notion, Mistral, options."""
+"""Page « Paramètres » : emploi du temps, Google Drive, Mistral (transcription), options."""
 
 from __future__ import annotations
 
@@ -11,9 +11,9 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
 
-from .. import calendar_ics, config, db, llm, subjects
+from .. import calendar_ics, config, db, recorder, transcribe
 from ..pipeline import pipeline
-from ..publish import drive, notion
+from ..publish import drive
 from ..web import redirect, render
 
 router = APIRouter()
@@ -35,9 +35,6 @@ def settings_page(request: Request, check: bool = False):
         drive_client_type=drive.client_type(),
         drive_failed=db.q1("SELECT COUNT(*) AS n FROM recordings WHERE drive_status = 'error'")["n"],
         drive_root_url=db.get_setting("drive_root_url"),
-        notion_token=bool(config.notion_token()),
-        notion_root_id=notion.extract_id(values["notion_root"]),
-        notion_urls={k: db.get_setting(f"notion_{k}_url") for k in ("matieres", "seances")},
         mistral_key=bool(config.mistral_api_key()),
         ics_last=db.get_setting("ics_last_refresh"),
         ics_error=db.get_setting("ics_last_error"),
@@ -72,57 +69,36 @@ async def upload_calendar(file: UploadFile = File(...)):
 
 @router.post("/parametres/modeles")
 def save_models(
-    llm_model: str = Form(...),
     transcription_model: str = Form(...),
     transcription_language: str = Form(""),
-    llm_chunk_chars: int = Form(60000),
-    llm_max_tokens: int = Form(32000),
-    llm_reasoning_effort: str = Form("high"),
     audio_bitrate: str = Form("48k"),
-    ocr_model: str = Form(""),
 ):
     if not re.fullmatch(r"\d{2,3}k", audio_bitrate.strip()):
         return redirect("/parametres#mistral", "Débit audio invalide (ex. 48k).", "err")
-    if llm_reasoning_effort not in ("", "none", "high"):
-        return redirect("/parametres#mistral", "Niveau de raisonnement invalide.", "err")
-    db.set_setting("llm_model", llm_model.strip() or config.DEFAULT_SETTINGS["llm_model"])
-    db.set_setting("llm_reasoning_effort", llm_reasoning_effort)
     db.set_setting("transcription_model", transcription_model.strip() or "voxtral-mini-latest")
-    db.set_setting("ocr_model", ocr_model.strip() or config.DEFAULT_SETTINGS["ocr_model"])
     db.set_setting("transcription_language", transcription_language.strip())
-    db.set_setting("llm_chunk_chars", str(max(llm_chunk_chars, 5000)))
-    db.set_setting("llm_max_tokens", str(max(llm_max_tokens, 2000)))
     db.set_setting("audio_bitrate", audio_bitrate.strip())
-    return redirect("/parametres#mistral", "Réglages Mistral enregistrés.")
+    return redirect("/parametres#mistral", "Réglages de la transcription enregistrés.")
 
 
 @router.post("/parametres/mistral/test", response_class=HTMLResponse)
 def test_mistral(request: Request):
-    ok, message, models = llm.test_api_key()
+    ok, message, models = transcribe.test_api_key()
     return render(request, "partials/test_result.html", ok=ok, message=message, models=models)
 
 
 @router.post("/parametres/drive")
-def save_drive(drive_root_name: str = Form("Cours M1"), drive_notebooklm: str = Form(""),
-               drive_upload_sources: str = Form(""), drive_writer: str = Form("app")):
-    if drive_writer not in ("app", "automatisation"):
-        return redirect("/parametres#drive", "Mode de rédaction inconnu.", "err")
+def save_drive(drive_root_name: str = Form("Cours M1")):
     db.set_setting("drive_root_name", drive_root_name.strip() or "Cours M1")
-    db.set_setting("drive_notebooklm", "1" if drive_notebooklm else "0")
-    db.set_setting("drive_upload_sources", "1" if drive_upload_sources else "0")
-    db.set_setting("drive_writer", drive_writer)
-    if drive_writer == "automatisation":
-        return redirect("/parametres#drive", "Mode automatisation : les prochaines transcriptions (et leurs supports) "
-                                             "seront déposées dans Drive ; l'app n'écrit plus les séances, le cours "
-                                             "complet, _etat.md ni le Google Doc.")
     return redirect("/parametres#drive", "Options Drive enregistrées.")
 
 
 def _requeue_failed_drive() -> None:
-    """Après connexion : republie sur Drive les séances dont la publication Drive avait échoué."""
+    """Après connexion : redépose dans Drive les séances dont le dépôt avait échoué, et récupère les cours."""
     for rec in db.q("SELECT id FROM recordings WHERE drive_status = 'error'"):
-        if subjects.course_path(rec["id"]).exists():
-            pipeline.submit("recording", rec["id"], "publish_drive", chain=False)
+        if (recorder.recording_dir(rec["id"]) / "transcript.txt").exists():
+            pipeline.submit("recording", rec["id"], "publish", chain=False)
+    drive.sync_state["at"] = 0.0  # prochaine récupération des cours dès le prochain passage de la file
 
 
 def _drive_auth_fragment(request: Request):
@@ -168,18 +144,6 @@ def drive_auth_fragment(request: Request):
 def drive_disconnect():
     drive.disconnect()
     return redirect("/parametres#drive", "Google Drive déconnecté (token.json supprimé).")
-
-
-@router.post("/parametres/notion")
-def save_notion(notion_root: str = Form("")):
-    """Enregistre la page racine puis vérifie tout de suite l'accès (jeton + page partagée)."""
-    if notion_root.strip() and not notion.extract_id(notion_root):
-        return redirect("/parametres#notion", "URL ou ID de page Notion non reconnu.", "err")
-    db.set_setting("notion_root", notion_root.strip())
-    if not notion_root.strip():
-        return redirect("/parametres#notion", "Page racine Notion retirée.")
-    ok, message = notion.test_connection()
-    return redirect("/parametres#notion", message if ok else f"Page enregistrée. {message}", "ok" if ok else "err")
 
 
 @router.post("/parametres/rappel")

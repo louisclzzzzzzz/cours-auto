@@ -30,7 +30,7 @@ class FakeFlow:
 
     @property
     def credentials(self):
-        return SimpleNamespace(to_json=lambda: json.dumps({"token": "t", "refresh_token": "r"}))
+        return SimpleNamespace(to_json=lambda: json.dumps({"token": "t", "refresh_token": "r"}), granted_scopes=None)
 
 
 @pytest.fixture

@@ -22,15 +22,10 @@ CREATE TABLE IF NOT EXISTS subjects (
     slug TEXT NOT NULL UNIQUE,
     teachers TEXT NOT NULL DEFAULT '',
     vocabulary TEXT NOT NULL DEFAULT '[]',
-    proposed_terms TEXT NOT NULL DEFAULT '[]',
-    state_recording_id INTEGER,
     drive_folder_id TEXT, drive_folder_url TEXT,
     drive_sessions_folder_id TEXT, drive_sessions_folder_url TEXT,
-    drive_sources_folder_id TEXT, drive_sources_folder_url TEXT,
     drive_full_id TEXT, drive_full_url TEXT,
-    drive_state_id TEXT, drive_state_url TEXT,
     drive_gdoc_id TEXT, drive_gdoc_url TEXT,
-    notion_page_id TEXT, notion_page_url TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT
 );
@@ -65,20 +60,7 @@ CREATE TABLE IF NOT EXISTS recordings (
     duration_seconds REAL,
     segment_count INTEGER NOT NULL DEFAULT 0,
     drive_status TEXT NOT NULL DEFAULT 'pending', drive_error TEXT,
-    notion_status TEXT NOT NULL DEFAULT 'pending', notion_error TEXT,
     drive_md_id TEXT, drive_md_url TEXT, drive_md_name TEXT,
-    drive_annot_id TEXT, drive_annot_url TEXT,
-    drive_audio_id TEXT, drive_audio_url TEXT,
-    drive_transcript_id TEXT, drive_transcript_url TEXT,
-    notion_page_id TEXT, notion_page_url TEXT,
-    notion_version INTEGER NOT NULL DEFAULT 0,
-    notion_parts_done INTEGER NOT NULL DEFAULT 0,
-    notion_content_complete INTEGER NOT NULL DEFAULT 0,
-    notion_content_hash TEXT,
-    notion_old_pages TEXT NOT NULL DEFAULT '[]',
-    notion_pending_action TEXT,
-    annotations_imported_at TEXT,
-    state_note TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT
 );
@@ -101,19 +83,13 @@ CREATE TABLE IF NOT EXISTS logs (
     created_at TEXT NOT NULL
 );
 
--- Supports de cours (diapositives, PDF…) joints à une séance, lus par OCR pour la mise en forme.
+-- Supports de cours (diapositives, PDF…) joints à une séance, déposés dans Drive avec la transcription.
 CREATE TABLE IF NOT EXISTS supports (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     recording_id INTEGER NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
     filename TEXT NOT NULL,
     stored_name TEXT NOT NULL,
     size INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'pending',
-    error TEXT,
-    method TEXT,
-    pages INTEGER,
-    chars INTEGER,
-    used_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT
 );
@@ -150,12 +126,14 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     "recordings": {
         "origin": "TEXT NOT NULL DEFAULT 'browser'",  # 'browser' (enregistré dans l'app) | 'import' (fichier)
         "source_filename": "TEXT",
-        # Transcription déposée dans <Matière>/Transcriptions/ (mode « automatisation » de Drive)
+        # Transcription déposée dans <Matière>/Transcriptions/ de Drive
         "drive_transcription_id": "TEXT",
         "drive_transcription_url": "TEXT",
         # Mistral momentanément indisponible : date du prochain essai automatique et nombre d'essais faits
         "auto_retry_at": "TEXT",
         "auto_retry_count": "INTEGER NOT NULL DEFAULT 0",
+        # Cours rédigé par la tâche Claude (drive_md_id) : date de modification de la version récupérée
+        "drive_md_modified": "TEXT",
     },
     "subjects": {
         "drive_transcriptions_folder_id": "TEXT",
@@ -384,11 +362,6 @@ def list_supports(recording_id: int) -> list[dict]:
     return q("SELECT * FROM supports WHERE recording_id = ? ORDER BY id", (recording_id,))
 
 
-def list_supports_by_status(*statuses: str) -> list[dict]:
-    marks = ", ".join("?" for _ in statuses)
-    return q(f"SELECT * FROM supports WHERE status IN ({marks}) ORDER BY id", statuses)
-
-
 def update_support(support_id: int, **fields: Any) -> None:
     _update("supports", support_id, fields)
 
@@ -403,6 +376,19 @@ def next_session_number(subject_id: int, course_type: str, exclude_id: int | Non
         (subject_id, course_type, exclude_id or -1),
     )
     return int(row["n"] or 0) + 1 if row else 1
+
+
+def sessions_to_renumber(rec: dict) -> list[dict]:
+    """Séances qui reculent d'un cran si `rec` est supprimée (CM 3 → CM 2…) : les suivantes du même type dans la
+    matière, sauf si son numéro reste porté par une autre séance (doublon)."""
+    if not rec.get("subject_id") or not rec.get("session_number"):
+        return []
+    same = " WHERE r.subject_id = ? AND r.course_type = ? AND r.id != ?"
+    args = (rec["subject_id"], rec["course_type"], rec["id"])
+    if q1(RECORDING_SELECT + same + " AND r.session_number = ?", (*args, rec["session_number"])):
+        return []
+    return q(RECORDING_SELECT + same + " AND r.session_number > ? ORDER BY r.session_number, r.id",
+             (*args, rec["session_number"]))
 
 
 def session_counts(subject_id: int) -> dict[str, int]:

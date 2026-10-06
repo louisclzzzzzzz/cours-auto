@@ -1,9 +1,8 @@
-"""Faux services Google Drive et Notion (en mémoire) et petits documents de test (PDF, PPTX)."""
+"""Faux service Google Drive (en mémoire) et petit PDF de test."""
 
 from __future__ import annotations
 
 import itertools
-import re
 from types import SimpleNamespace
 
 from googleapiclient.errors import HttpError
@@ -24,9 +23,13 @@ class FakeDriveFiles:
         self.store = store
         self.log = log
         self._ids = itertools.count(1)
+        self._clock = itertools.count(1)
 
     def _public(self, f: dict) -> dict:
-        return {k: f[k] for k in ("id", "name", "mimeType", "trashed", "webViewLink")}
+        return {k: f[k] for k in ("id", "name", "mimeType", "trashed", "webViewLink", "modifiedTime")}
+
+    def _touch(self, f: dict) -> None:
+        f["modifiedTime"] = f"2026-10-06T00:00:{next(self._clock):02d}.000Z"
 
     def get(self, fileId, fields=None):
         def run():
@@ -46,6 +49,7 @@ class FakeDriveFiles:
                 "content": media_body.getbytes(0, media_body.size()) if media_body else None,
                 "source_mime": media_body.mimetype() if media_body else None,
             }
+            self._touch(f)
             self.store[fid] = f
             self.log.append(("create", fid, body["name"]))
             return self._public(f)
@@ -59,9 +63,20 @@ class FakeDriveFiles:
             if media_body is not None:
                 f["content"] = media_body.getbytes(0, media_body.size())
                 f["source_mime"] = media_body.mimetype()
+            self._touch(f)
             self.log.append(("update", fileId, f["name"]))
             return self._public(f)
         return _Req(run)
+
+    def list(self, q, pageSize=None, pageToken=None, fields=None):
+        parent = q.split("'")[1]  # « '<id>' in parents and trashed = false »
+        def run():
+            files = [self._public(f) for f in self.store.values() if parent in f["parents"] and not f["trashed"]]
+            return {"files": files}
+        return _Req(run)
+
+    def get_media(self, fileId):
+        return _Req(lambda: self.store[fileId]["content"])
 
 
 class FakeDriveService:
@@ -81,99 +96,21 @@ class FakeDriveService:
     def text(self, name: str) -> str:
         return self.by_name(name)["content"].decode("utf-8")
 
+    def add_external(self, name: str, parent: str, content: str) -> dict:
+        """Fichier écrit par un autre outil (la tâche Claude) : l'app ne peut que le lire."""
+        fid = f"ext{next(self._files._ids)}"
+        f = {"id": fid, "name": name, "mimeType": "text/markdown", "parents": [parent], "trashed": False,
+             "webViewLink": f"https://drive.example/{fid}", "content": content.encode("utf-8"), "source_mime": None}
+        self._files._touch(f)
+        self.store[fid] = f
+        return f
 
-# --- Notion ----------------------------------------------------------------------------------------
-
-
-class FakeNotion:
-    """Imite `NotionClient.request` (et donc toutes les méthodes du vrai client qui s'appuient dessus)."""
-
-    def __init__(self, fail_append_at: int | None = None):
-        self.pages: dict[str, dict] = {}
-        self.databases: dict[str, dict] = {}
-        self.data_sources: dict[str, dict] = {}
-        self.views: list[dict] = []
-        self.calls: list[tuple] = []
-        self._ids = itertools.count(1)
-        self.fail_append_at = fail_append_at
-        self.appends = 0
-        self.root = "a" * 32
-        self.pages[self.root] = {"id": self.root, "in_trash": False, "properties": {"title": {"type": "title", "title": [{"plain_text": "Cours M1"}]}}, "markdown": ""}
-
-    def _id(self) -> str:
-        return f"{next(self._ids):032x}"
-
-    def request(self, method: str, path: str, *, json: dict | None = None, params: dict | None = None, max_attempts: int = 6) -> dict:
-        from app.publish.notion import NotionError
-
-        self.calls.append((method, path, json))
-        parts = path.strip("/").split("/")
-        if method == "GET" and parts == ["users", "me"]:
-            return {"name": "Prise de notes"}
-        if method == "POST" and parts == ["databases"]:
-            db_id, ds_id = self._id(), self._id()
-            props = {name: {"id": f"p{i}", **conf} for i, (name, conf) in enumerate(json["initial_data_source"]["properties"].items())}
-            self.databases[db_id] = {"id": db_id, "in_trash": False, "data_sources": [{"id": ds_id}], "url": f"https://notion.example/{db_id}", "title": json["title"]}
-            self.data_sources[ds_id] = {"id": ds_id, "properties": props}
-            return self.databases[db_id]
-        if method == "GET" and parts[0] == "databases":
-            if parts[1] not in self.databases:
-                raise NotionError(404, "object_not_found", "db")
-            return self.databases[parts[1]]
-        if parts[0] == "data_sources":
-            ds = self.data_sources[parts[1]]
-            if method == "PATCH":
-                ds["properties"].update({k: {"id": f"x{k}", **v} for k, v in json["properties"].items()})
-            return ds
-        if method == "POST" and parts == ["views"]:
-            self.views.append(json)
-            return {"object": "view", "id": self._id()}
-        if method == "POST" and parts == ["pages"]:
-            pid = self._id()
-            self.pages[pid] = {
-                "id": pid, "in_trash": False, "parent": json["parent"], "properties": json["properties"],
-                "markdown": json.get("markdown", ""), "url": f"https://notion.example/{pid}",
-            }
-            return self.pages[pid]
-        if parts[0] == "pages" and len(parts) == 2:
-            page = self.pages.get(parts[1])
-            if page is None:
-                raise NotionError(404, "object_not_found", "page")
-            if method == "PATCH":
-                if "properties" in json:
-                    page["properties"].update(json["properties"])
-                if "in_trash" in json:
-                    page["in_trash"] = json["in_trash"]
-            return page
-        if parts[0] == "pages" and parts[2:] == ["markdown"]:
-            page = self.pages[parts[1]]
-            if method == "GET":
-                return {"object": "page_markdown", "markdown": page["markdown"], "truncated": False, "unknown_block_ids": []}
-            if json["type"] == "insert_content":
-                self.appends += 1
-                if self.fail_append_at is not None and self.appends == self.fail_append_at:
-                    raise NotionError(502, "bad_gateway", "coupure simulée")
-                page["markdown"] += "\n" + json["insert_content"]["content"]
-            elif json["type"] == "replace_content":
-                page["markdown"] = json["replace_content"]["new_str"]
-            return {"object": "page_markdown", "markdown": page["markdown"]}
-        raise AssertionError(f"Appel inattendu : {method} {path}")
-
-    def session_pages(self) -> list[dict]:
-        return [p for p in self.pages.values() if "Titre" in p.get("properties", {})]
+    def rewrite_external(self, fid: str, content: str) -> None:
+        self.store[fid]["content"] = content.encode("utf-8")
+        self._files._touch(self.store[fid])
 
 
-def title_of(page: dict) -> str:
-    prop = page["properties"]["Titre"]["title"]
-    return "".join(t["text"]["content"] for t in prop)
-
-
-def notion_like(md: str) -> str:
-    """Approximation de ce que renvoie Notion en lecture (maths inline $`…`$)."""
-    return re.sub(r"(?<!\$)\$([^$\n]+?)\$(?!\$)", r"$`\1`$", md)
-
-
-# --- Documents de test (supports de cours) --------------------------------------------------------
+# --- Document de test (support de cours) --------------------------------------------------------
 
 
 def make_pdf(path, pages: list[list[str]]) -> bytes:
@@ -205,21 +142,3 @@ def make_pdf(path, pages: list[list[str]]) -> bytes:
     out += f"trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
     path.write_bytes(bytes(out))
     return bytes(out)
-
-
-def make_pptx(path, slides: list[tuple[str, list[str], str]]) -> bytes:
-    """Présentation : (titre, puces, notes de l'intervenant) par diapositive."""
-    from pptx import Presentation
-
-    prs = Presentation()
-    for title, bullets, notes in slides:
-        slide = prs.slides.add_slide(prs.slide_layouts[1])
-        slide.shapes.title.text = title
-        frame = slide.placeholders[1].text_frame
-        frame.text = bullets[0]
-        for bullet in bullets[1:]:
-            frame.add_paragraph().text = bullet
-        if notes:
-            slide.notes_slide.notes_text_frame.text = notes
-    prs.save(str(path))
-    return path.read_bytes()

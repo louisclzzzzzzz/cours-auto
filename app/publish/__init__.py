@@ -1,4 +1,4 @@
-"""Publication vers les destinations externes (Google Drive, Notion)."""
+"""Échanges avec Google Drive : dépôt des transcriptions, récupération des cours."""
 
 
 class PublishSkipped(Exception):

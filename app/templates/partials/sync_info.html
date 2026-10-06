@@ -1,0 +1,6 @@
+{# Dernière récupération des cours rédigés par la tâche Claude (automatique toutes les 10 min). #}
+{% if sync.error %}
+<p class="notice small">Cours non récupérés depuis Drive : {{ sync.error }}</p>
+{% elif sync.at %}
+<p class="small muted">Cours vérifiés dans Drive {{ sync.at|when }} (puis toutes les 10 minutes).</p>
+{% endif %}

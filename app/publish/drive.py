@@ -1,11 +1,11 @@
-"""Google Drive : archive Markdown + Google Doc miroir pour NotebookLM.
+"""Google Drive : dépôt des transcriptions et supports, récupération des cours rédigés par la tâche Claude.
 
-Scope `drive.file` uniquement : l'app ne voit que les fichiers qu'elle a créés, donc tous les
-identifiants (dossiers, fichiers) sont stockés en base.
+L'app dépose la transcription de chaque séance dans `<Matière>/Transcriptions/` et ses supports dans
+`<Matière>/Supports/`. Une tâche Claude planifiée rédige ensuite le cours dans `<Matière>/Séances/`
+(`AAAA-MM-JJ_CM03_<titre>.md`) ainsi que le cours complet, `_etat.md` et le Google Doc NotebookLM.
 
-Mode « automatisation » (paramètre `drive_writer`) : l'app dépose seulement les transcriptions et les
-supports de cours (dossiers `Transcriptions/` et `Supports/` de chaque matière) ; une automatisation externe
-rédige les séances, le cours complet, `_etat.md` et le Google Doc NotebookLM, que l'app ne touche plus.
+Scopes : `drive.file` pour écrire (l'app ne modifie que les fichiers qu'elle a créés, leurs identifiants sont
+stockés en base) et `drive.readonly` pour lire les cours écrits par Claude, que `drive.file` ne voit pas.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import io
 import json
 import logging
 import os
+import re
 import threading
 import time
 import webbrowser
@@ -31,6 +32,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload
 
 from .. import config, db, recorder, subjects, supports
+from ..markdown_utils import extract_title
 from ..textutils import fmt_duration, fmt_time, fr_date
 from . import PublishSkipped
 
@@ -39,14 +41,18 @@ log = logging.getLogger(__name__)
 # Google peut renvoyer les scopes dans un ordre différent : ne pas en faire une erreur.
 os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+READ_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+SCOPES = ["https://www.googleapis.com/auth/drive.file", READ_SCOPE]
 FOLDER_MIME = "application/vnd.google-apps.folder"
-GDOC_MIME = "application/vnd.google-apps.document"
 FIELDS = "id, name, webViewLink, mimeType, trashed"
 
 
 class DriveAuthError(RuntimeError):
     pass
+
+
+class DriveReadError(DriveAuthError):
+    """Connexion faite sans l'autorisation de lecture : les cours écrits par Claude sont invisibles."""
 
 
 # --- Authentification -----------------------------------------------------------------------------
@@ -70,7 +76,11 @@ def is_configured() -> bool:
 
 
 def _save(creds: Credentials) -> None:
-    config.TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
+    data = json.loads(creds.to_json())
+    granted = creds.granted_scopes  # Google laisse décocher une autorisation : on garde celles accordées
+    if granted:
+        data["scopes"] = granted.split() if isinstance(granted, str) else list(granted)
+    config.TOKEN_FILE.write_text(json.dumps(data), encoding="utf-8")
     try:
         os.chmod(config.TOKEN_FILE, 0o600)
     except OSError:
@@ -83,7 +93,7 @@ def load_credentials() -> Credentials:
     if not config.TOKEN_FILE.exists():
         raise DriveAuthError("Drive non connecté : connectez-vous dans Paramètres, puis relancez la publication.")
     try:
-        creds = Credentials.from_authorized_user_file(str(config.TOKEN_FILE), SCOPES)
+        creds = Credentials.from_authorized_user_file(str(config.TOKEN_FILE))
     except ValueError as exc:
         raise DriveAuthError(f"token.json invalide ({exc}) : reconnectez Drive dans Paramètres.") from exc
     if not creds.valid:
@@ -99,6 +109,14 @@ def load_credentials() -> Credentials:
         else:
             raise DriveAuthError("Autorisation Google invalide : reconnectez Drive dans Paramètres.")
     return creds
+
+
+def can_read(creds: Credentials) -> bool:
+    return creds.has_scopes([READ_SCOPE]) or creds.has_scopes(["https://www.googleapis.com/auth/drive"])
+
+
+READ_MISSING = ("Lecture des cours non autorisée : ajoutez le scope …/auth/drive.readonly dans Google Cloud "
+                "(Accès aux données), puis reconnectez Drive dans Paramètres en cochant l'accès à vos fichiers.")
 
 
 def _client_config() -> dict:
@@ -279,10 +297,12 @@ def connection_status(force: bool = False) -> dict:
         value = {"configured": True, "connected": False, "message": "Non connecté"}
     else:
         try:
-            client = DriveClient(load_credentials())
+            creds = load_credentials()
+            client = DriveClient(creds)
             about = client._exec(client.svc.about().get(fields="user"))
             email = about.get("user", {}).get("emailAddress", "")
-            value = {"configured": True, "connected": True, "message": f"Connecté ({email})" if email else "Connecté"}
+            value = {"configured": True, "connected": True, "can_read": can_read(creds),
+                     "message": f"Connecté ({email})" if email else "Connecté"}
         except (DriveAuthError, PublishSkipped) as exc:
             value = {"configured": True, "connected": False, "message": str(exc)}
         except Exception as exc:  # noqa: BLE001 - hors ligne…
@@ -359,31 +379,23 @@ class DriveClient:
             self.svc.files().create(body={"name": name, "parents": [parent_id]}, media_body=media, fields=FIELDS)
         )
 
-    def upsert_gdoc(self, name: str, parent_id: str, markdown: str, existing_id: str | None) -> tuple[dict, bool]:
-        """Google Doc converti depuis le Markdown ; mis à jour sur le même ID (NotebookLM garde la source).
+    def list_children(self, folder_id: str) -> list[dict]:
+        files: list[dict] = []
+        token = None
+        while True:
+            res = self._exec(self.svc.files().list(
+                q=f"'{folder_id}' in parents and trashed = false", pageSize=200, pageToken=token,
+                fields="nextPageToken, files(id, name, mimeType, modifiedTime, webViewLink)"))
+            files += res.get("files", [])
+            token = res.get("nextPageToken")
+            if not token:
+                return files
 
-        Renvoie (fichier, créé?)."""
-        existing = self.get(existing_id)
-        for mimetype in ("text/markdown", "text/plain"):
-            media = MediaIoBaseUpload(io.BytesIO(markdown.encode("utf-8")), mimetype=mimetype, resumable=True)
-            try:
-                if existing:
-                    f = self._exec(self.svc.files().update(
-                        fileId=existing["id"], body={"name": name}, media_body=media, fields=FIELDS))
-                    return f, False
-                f = self._exec(self.svc.files().create(
-                    body={"name": name, "mimeType": GDOC_MIME, "parents": [parent_id]}, media_body=media, fields=FIELDS))
-                return f, True
-            except HttpError as exc:
-                # Conversion Markdown refusée : repli en texte brut (le contenu reste lisible par NotebookLM).
-                if mimetype == "text/markdown" and exc.resp.status == 400:
-                    log.warning("Conversion Markdown → Google Doc refusée (%s), repli en texte brut.", exc)
-                    continue
-                raise
-        raise RuntimeError("unreachable")
+    def download_text(self, file_id: str) -> str:
+        return self._exec(self.svc.files().get_media(fileId=file_id)).decode("utf-8")
 
 
-# --- Publication ------------------------------------------------------------------------------------
+# --- Dépôt des transcriptions et supports ------------------------------------------------------------
 
 def _root_folder(client: DriveClient) -> dict:
     name = db.get_setting("drive_root_name") or "Cours M1"
@@ -403,10 +415,6 @@ def _subject_folders(client: DriveClient, subject: dict) -> dict:
     }
     db.update_subject(subject["id"], **fields)
     return {**subject, **fields}
-
-
-def automation_mode() -> bool:
-    return db.get_setting("drive_writer") == "automatisation"
 
 
 TRANSCRIPTIONS_FOLDER = "Transcriptions"
@@ -501,77 +509,116 @@ def _deposit_safely(recording_id: int) -> None:
 
 
 def deposit_in_background(recording_id: int) -> None:
-    """Mode automatisation : support ajouté après le dépôt de la transcription → envoyé tout de suite."""
+    """Support ajouté après le dépôt de la transcription : envoyé tout de suite."""
     rec = db.get_recording(recording_id)
-    if automation_mode() and is_configured() and rec and rec.get("drive_transcription_id"):
+    if is_configured() and rec and rec.get("drive_transcription_id"):
         threading.Thread(target=_deposit_safely, args=(recording_id,), name=f"depot-{recording_id}", daemon=True).start()
 
 
-def publish_subject(subject_id: int, client: DriveClient | None = None, recording_id: int | None = None) -> dict:
-    """Régénère et envoie le cours complet, `_etat.md` et le Google Doc NotebookLM de la matière."""
-    if automation_mode():
-        raise PublishSkipped("Mode automatisation : le cours complet, _etat.md et le Google Doc NotebookLM "
-                             "sont rédigés par l'automatisation.")
-    client = client or DriveClient()
-    subject = _subject_folders(client, db.get_subject(subject_id))
-    full_md = subjects.build_full_course(subject)
-    full = client.upsert_text(subjects.full_course_name(subject), subject["drive_folder_id"], full_md,
-                              subject.get("drive_full_id"))
-    fields = {"drive_full_id": full["id"], "drive_full_url": full.get("webViewLink")}
-    state_md = subjects.read_state(subject)
-    if state_md:
-        state = client.upsert_text("_etat.md", subject["drive_folder_id"], state_md, subject.get("drive_state_id"))
-        fields.update(drive_state_id=state["id"], drive_state_url=state.get("webViewLink"))
-    if db.get_bool_setting("drive_notebooklm"):
-        had_doc = bool(subject.get("drive_gdoc_id"))
-        doc, created = client.upsert_gdoc(subjects.notebooklm_doc_name(subject), subject["drive_folder_id"], full_md,
-                                          subject.get("drive_gdoc_id"))
-        fields.update(drive_gdoc_id=doc["id"], drive_gdoc_url=doc.get("webViewLink"))
-        if created and had_doc:
-            db.log(recording_id, "Le Google Doc NotebookLM avait disparu : un nouveau a été créé, "
-                                 "ajoutez-le à nouveau comme source dans NotebookLM.", "warning")
-    db.update_subject(subject_id, **fields)
-    return db.get_subject(subject_id)
-
-
 def publish_recording(recording_id: int, client: DriveClient | None = None) -> None:
-    if automation_mode():  # séances, cours complet, _etat.md et Google Doc : rédigés par l'automatisation
-        rec = db.get_recording(recording_id)
-        if rec.get("drive_md_id") and not rec.get("drive_transcription_id"):
-            raise PublishSkipped("Séance déjà rédigée dans Drive par l'app avant le mode automatisation : sa "
-                                 "transcription n'est pas déposée (l'automatisation la rédigerait une seconde fois).")
-        if not deposit_inputs(recording_id, client):
-            raise RuntimeError("Aucune transcription à déposer dans Drive.")
-        return
+    """Étape « dépôt Drive » du traitement : transcription et supports de la séance."""
     rec = db.get_recording(recording_id)
-    course = subjects.read_course(recording_id)
-    if course is None:
-        raise RuntimeError("Aucun cours mis en forme à publier.")
-    client = client or DriveClient()
-    subject = _subject_folders(client, db.get_subject(rec["subject_id"]))
-    parent = subject["drive_sessions_folder_id"]
+    if rec.get("drive_md_id") and not rec.get("drive_transcription_id"):
+        raise PublishSkipped("Séance déjà rédigée dans Drive avant le dépôt des transcriptions : sa transcription "
+                             "n'est pas déposée (le cours serait rédigé une seconde fois).")
+    if not deposit_inputs(recording_id, client):
+        raise RuntimeError("Aucune transcription à déposer dans Drive.")
 
-    f = client.upsert_text(subjects.session_filename(rec), parent, course, rec.get("drive_md_id"))
-    fields = {"drive_md_id": f["id"], "drive_md_url": f.get("webViewLink"), "drive_md_name": f.get("name")}
-    annotated = subjects.read_course(recording_id, prefer_annotated=True) if subjects.annotated_path(recording_id).exists() else None
-    if annotated:
-        a = client.upsert_text(subjects.annotated_filename(rec), parent, annotated, rec.get("drive_annot_id"))
-        fields.update(drive_annot_id=a["id"], drive_annot_url=a.get("webViewLink"))
 
-    if db.get_bool_setting("drive_upload_sources"):
-        sources = client.ensure_folder("Sources", subject["drive_folder_id"], subject.get("drive_sources_folder_id"))
-        db.update_subject(subject["id"], drive_sources_folder_id=sources["id"],
-                          drive_sources_folder_url=sources.get("webViewLink"))
-        stem = subjects.session_filename(rec)[:-3]
-        audio = recorder.audio_path(recording_id)
-        if audio.exists():
-            a = client.upsert_file(f"{stem}.mp3", sources["id"], audio, "audio/mpeg", rec.get("drive_audio_id"))
-            fields.update(drive_audio_id=a["id"], drive_audio_url=a.get("webViewLink"))
-        transcript = recorder.recording_dir(recording_id) / "transcript.txt"
-        if transcript.exists():
-            t = client.upsert_text(f"{stem}_transcription.txt", sources["id"], transcript.read_text(encoding="utf-8"),
-                                   rec.get("drive_transcript_id"), mimetype="text/plain")
-            fields.update(drive_transcript_id=t["id"], drive_transcript_url=t.get("webViewLink"))
+# --- Cours rédigés par la tâche Claude ------------------------------------------------------------------
+#
+# Fichiers `<Matière>/Séances/AAAA-MM-JJ_CM03_<titre>.md` : même date, type et numéro que la séance de l'app.
+# Le cours récupéré devient `course.md` de la séance (l'ancienne version est gardée dans `versions/`).
 
-    db.update_recording(recording_id, **fields)
-    publish_subject(rec["subject_id"], client, recording_id)
+COURSE_NAME_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})_(CM|TD|TP)(\d+)_.*\.md$", re.IGNORECASE)
+TITLE_PREFIX_RE = re.compile(r"^\s*(?:CM|TD|TP)\s*\d+\s*[–—:\-]+\s*", re.IGNORECASE)
+SYNC_INTERVAL_S = 10 * 60
+_sync_lock = threading.Lock()
+sync_state: dict = {"at": 0.0, "error": None}  # dernière récupération (time.time()) et son éventuelle erreur
+
+
+def _session_key(rec: dict) -> tuple[str, str, int]:
+    return rec["session_date"], rec["course_type"].upper(), int(rec["session_number"] or 0)
+
+
+def _subject_links(client: DriveClient, subject: dict) -> None:
+    """Liens vers le cours complet et le Google Doc NotebookLM tenus à jour par Claude."""
+    fields = {}
+    for f in client.list_children(subject["drive_folder_id"]):
+        if f["name"].endswith("– Cours complet.md"):
+            fields.update(drive_full_id=f["id"], drive_full_url=f.get("webViewLink"))
+        elif f["name"].endswith("– NotebookLM"):
+            fields.update(drive_gdoc_id=f["id"], drive_gdoc_url=f.get("webViewLink"))
+    if fields:
+        db.update_subject(subject["id"], **fields)
+
+
+def _fetch_subject(client: DriveClient, subject: dict) -> list[dict]:
+    files = client.list_children(subject["drive_sessions_folder_id"])
+    by_id = {f["id"]: f for f in files}
+    by_key: dict = {}
+    for f in sorted(files, key=lambda f: f.get("modifiedTime") or ""):  # le plus récent l'emporte
+        m = COURSE_NAME_RE.match(f["name"])
+        if m:
+            by_key[(m.group(1), m.group(2).upper(), int(m.group(3)))] = f
+    fetched = []
+    for rec in db.list_recordings(subject["id"]):
+        f = by_key.get(_session_key(rec)) or by_id.get(rec.get("drive_md_id") or "")
+        if not f or (f["id"] == rec.get("drive_md_id") and f.get("modifiedTime") == rec.get("drive_md_modified")
+                     and subjects.course_path(rec["id"]).exists()):
+            continue
+        md = client.download_text(f["id"])
+        if md != subjects.read_course(rec["id"]):
+            subjects.archive_versions(rec["id"])
+            subjects.course_path(rec["id"]).parent.mkdir(parents=True, exist_ok=True)
+            subjects.course_path(rec["id"]).write_text(md, encoding="utf-8")
+        title = TITLE_PREFIX_RE.sub("", extract_title(md) or "").strip() or rec.get("title")
+        db.update_recording(rec["id"], drive_md_id=f["id"], drive_md_url=f.get("webViewLink"), drive_md_name=f["name"],
+                            drive_md_modified=f.get("modifiedTime"), title=title)
+        recorder.write_meta(rec["id"])
+        db.log(rec["id"], f"Cours récupéré depuis Drive : « {f['name']} ».")
+        fetched.append(db.get_recording(rec["id"]))
+    if fetched:
+        subjects.build_full_course(db.get_subject(subject["id"]))
+    return fetched
+
+
+def fetch_courses(subject_id: int | None = None, client: DriveClient | None = None) -> list[dict]:
+    """Récupère les cours nouveaux ou modifiés dans les dossiers `Séances/` ; renvoie les séances mises à jour."""
+    with _sync_lock:
+        sync_state["at"] = time.time()
+        try:
+            if client is None:
+                creds = load_credentials()
+                if not can_read(creds):
+                    raise DriveReadError(READ_MISSING)
+                client = DriveClient(creds)
+            fetched = []
+            for subject in db.list_subjects():
+                if subject_id not in (None, subject["id"]) or not subject.get("drive_sessions_folder_id"):
+                    continue
+                _subject_links(client, subject)
+                fetched += _fetch_subject(client, subject)
+        except Exception as exc:
+            sync_state["error"] = str(exc)
+            raise
+        sync_state["error"] = None
+        return fetched
+
+
+def _fetch_quietly() -> None:
+    try:
+        fetch_courses()
+    except PublishSkipped:
+        pass
+    except Exception as exc:  # noqa: BLE001 - nouvel essai au prochain passage
+        log.info("Récupération des cours depuis Drive impossible : %s", exc)
+
+
+def fetch_courses_if_due() -> None:
+    """Appelée régulièrement par la file de traitement : récupération en tâche de fond toutes les 10 min."""
+    if (not is_configured() or not config.TOKEN_FILE.exists() or _sync_lock.locked()
+            or time.time() - sync_state["at"] < SYNC_INTERVAL_S):
+        return
+    sync_state["at"] = time.time()
+    threading.Thread(target=_fetch_quietly, name="cours-drive", daemon=True).start()

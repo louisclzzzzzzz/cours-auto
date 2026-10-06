@@ -5,9 +5,10 @@
 <div class="page-head">
   <div>
     <h1>Cours</h1>
-    <p class="muted">Vos matières et leurs séances mises en forme.</p>
+    <p class="muted">Vos matières et les cours rédigés par la tâche Claude, récupérés depuis Drive.</p>
   </div>
   <div class="actions">
+    <form method="post" action="/cours/drive" class="inline-form"><button>Récupérer depuis Drive</button></form>
     <details class="menu">
       <summary class="btn">+ Nouvelle matière</summary>
       <form method="post" action="/matieres" class="menu-panel form-panel">
@@ -20,6 +21,8 @@
     </details>
   </div>
 </div>
+
+{% include "partials/sync_info.html" %}
 
 {% if rows %}
 <ul class="rows card flush subject-rows" aria-label="Matières">
@@ -38,7 +41,6 @@
       {% endif %}
     </div>
     <div class="row-side">
-      {% if s.n_proposed %}<a class="badge warn" href="/matieres/{{ s.id }}#propositions">{{ s.n_proposed }} terme{{ 's' if s.n_proposed > 1 }} à valider</a>{% endif %}
       {% if s.n_sessions %}<span class="badge">{{ s.n_sessions }} séance{{ 's' if s.n_sessions > 1 }}</span>{% endif %}
     </div>
   </li>
@@ -79,12 +81,8 @@
 </details>
 {% endif %}
 
-{% if notion_seances_url or drive_root_url %}
-<p class="small muted">Tout retrouver :
-  {% if notion_seances_url %}{{ ext_link(notion_seances_url, 'base « Séances » dans Notion') }}{% endif %}
-  {% if notion_seances_url and drive_root_url %} · {% endif %}
-  {% if drive_root_url %}{{ ext_link(drive_root_url, 'dossier Google Drive') }}{% endif %}
-</p>
+{% if drive_root_url %}
+<p class="small muted">Tout retrouver : {{ ext_link(drive_root_url, 'dossier Google Drive') }}</p>
 {% endif %}
 {% endblock %}
 

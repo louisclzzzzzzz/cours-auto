@@ -1,13 +1,15 @@
-"""Page « Cours » : séances par matière, aperçu rendu (Markdown + KaTeX), liens Notion / Drive,
-import des annotations Notion."""
+"""Page « Cours » : séances par matière et aperçu rendu (Markdown + KaTeX) des cours rédigés par la tâche Claude,
+récupérés depuis Drive."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from datetime import datetime
+
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from .. import calendar_ics, db, subjects
-from ..pipeline import pipeline
+from ..publish import PublishSkipped, drive
 from ..web import redirect, render
 
 router = APIRouter()
@@ -20,48 +22,43 @@ def _subject_or_404(sid: int) -> dict:
     return subject
 
 
+def _sync_info() -> dict:
+    """Dernière récupération des cours depuis Drive (automatique toutes les 10 min ou par le bouton)."""
+    at = drive.sync_state["at"]
+    return {"at": datetime.fromtimestamp(at).astimezone().isoformat(timespec="seconds") if at else "",
+            "error": drive.sync_state["error"]}
+
+
 @router.get("/cours", response_class=HTMLResponse)
 def courses_page(request: Request):
     """Liste des matières (une ligne chacune) + intitulés de l'emploi du temps encore sans matière."""
     rows = []
     for s in db.list_subjects():
         sessions = subjects.sessions_with_course(s["id"])
-        rows.append({
-            **s,
-            "n_sessions": len(sessions),
-            "last": sessions[-1] if sessions else None,
-            "n_proposed": len(subjects.get_proposed_terms(s)),
-        })
+        rows.append({**s, "n_sessions": len(sessions), "last": sessions[-1] if sessions else None})
     return render(request, "courses.html", rows=rows,
                   unmapped=calendar_ics.unmapped_summaries(),
                   subjects_list=db.list_subjects(),
-                  notion_seances_url=db.get_setting("notion_seances_url"),
-                  drive_root_url=db.get_setting("drive_root_url"))
+                  drive_root_url=db.get_setting("drive_root_url"),
+                  sync=_sync_info())
 
 
 @router.get("/cours/{sid}", response_class=HTMLResponse)
 def subject_courses(request: Request, sid: int, seance: int | None = None):
     subject = _subject_or_404(sid)
     sessions = subjects.sessions_with_course(sid)
-    for r in sessions:
-        r["annotated"] = subjects.annotated_path(r["id"]).exists()
     others = [r for r in db.list_recordings(sid) if not subjects.course_path(r["id"]).exists()]
     selected = next((r for r in sessions if r["id"] == seance), sessions[-1] if sessions else None)
     return render(request, "course_subject.html", subject=subject, sessions=sessions, others=others,
-                  selected=selected, n_proposed=len(subjects.get_proposed_terms(subject)),
-                  drive_automation=db.get_setting("drive_writer") == "automatisation")
+                  selected=selected, sync=_sync_info())
 
 
 @router.get("/fragments/cours/seance/{rid}", response_class=HTMLResponse)
-def session_preview(request: Request, rid: int, version: str = "auto"):
+def session_preview(request: Request, rid: int):
     rec = db.get_recording(rid)
     if not rec:
         raise HTTPException(404, "Séance introuvable.")
-    has_annot = subjects.annotated_path(rid).exists()
-    use_annot = has_annot and version != "original"
-    return render(request, "partials/session_preview.html", rec=rec, has_annot=has_annot, use_annot=use_annot,
-                  md=subjects.read_course(rid, prefer_annotated=use_annot) or "",
-                  old_pages=db.loads(rec.get("notion_old_pages"), []),
+    return render(request, "partials/session_preview.html", rec=rec, md=subjects.read_course(rid) or "",
                   n_supports=len(db.list_supports(rid)))
 
 
@@ -71,26 +68,17 @@ def full_course(request: Request, sid: int):
     return render(request, "course_full.html", subject=subject, md=subjects.build_full_course(subject))
 
 
-@router.post("/cours/{sid}/annotations")
-def import_subject_annotations(sid: int):
-    _subject_or_404(sid)
-    pipeline.submit("subject", sid, "import_annotations")
-    return redirect(f"/cours/{sid}", "Import des annotations Notion lancé pour toute la matière (suivi dans Enregistrements).")
-
-
-@router.post("/cours/seance/{rid}/annotations")
-def import_session_annotations(rid: int):
-    rec = db.get_recording(rid)
-    if not rec:
-        raise HTTPException(404, "Séance introuvable.")
-    if not rec.get("notion_page_id"):
-        return redirect(f"/cours/{rec['subject_id']}?seance={rid}", "Cette séance n'a pas encore de page Notion.", "err")
-    pipeline.submit("recording", rid, "import_annotations", chain=False)
-    return redirect(f"/cours/{rec['subject_id']}?seance={rid}", "Import des annotations lancé.")
-
-
-@router.post("/cours/{sid}/drive")
-def republish_subject(sid: int):
-    _subject_or_404(sid)
-    pipeline.submit("subject", sid, "publish_drive")
-    return redirect(f"/cours/{sid}", "Régénération du cours complet et du Google Doc NotebookLM lancée.")
+@router.post("/cours/drive")
+def fetch_from_drive(subject_id: str = Form(""), back: str = Form("/cours")):
+    """Récupère tout de suite les cours rédigés par la tâche Claude (une matière ou toutes)."""
+    target = back if back.startswith("/") else "/cours"
+    try:
+        fetched = drive.fetch_courses(int(subject_id) if subject_id.isdigit() else None)
+    except PublishSkipped as exc:
+        return redirect(target, str(exc), "err")
+    except Exception as exc:  # noqa: BLE001 - message affiché tel quel (droits, réseau…)
+        return redirect(target, f"Récupération impossible : {exc}", "err")
+    if not fetched:
+        return redirect(target, "Aucun cours nouveau ou modifié dans Drive.")
+    names = ", ".join(f"{r['subject_name']} {subjects.session_label(r)}" for r in fetched)
+    return redirect(target, f"{len(fetched)} cours récupéré{'s' if len(fetched) > 1 else ''} depuis Drive : {names}.")
