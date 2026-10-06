@@ -108,9 +108,28 @@ def _support_or_404(rid: int, sid: int) -> dict:
     return sup
 
 
+def _ready_to_process() -> list[dict]:
+    """Séances dont l'audio est prêt et que rien n'attend déjà dans la file (plus ancienne d'abord)."""
+    return [r for r in db.list_recordings_by_status("uploaded") if not pipeline.is_active(r["id"])]
+
+
 @router.get("/enregistrements", response_class=HTMLResponse)
 def list_page(request: Request):
-    return render(request, "recordings.html", **_list_context())
+    return render(request, "recordings.html", **_list_context(), n_ready=len(_ready_to_process()))
+
+
+@router.post("/enregistrements/tout-traiter")
+def process_all():
+    """« Tout traiter » : lance le traitement de chaque séance prête ; la file les traite une à la fois."""
+    ready = _ready_to_process()
+    if not ready:
+        return redirect("/enregistrements", "Aucune séance prête à traiter.")
+    for rec in ready:
+        db.update_recording(rec["id"], auto_retry_at=None, auto_retry_count=0)
+        pipeline.submit("recording", rec["id"], "transcribe")
+    n = len(ready)
+    return redirect("/enregistrements", f"Traitement lancé pour {n} séance{'s' if n > 1 else ''} : transcription puis "
+                                        "dépôt dans Drive, une à la fois.")
 
 
 @router.get("/fragments/recordings", response_class=HTMLResponse)

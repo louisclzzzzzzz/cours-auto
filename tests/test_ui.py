@@ -303,3 +303,29 @@ def test_deletion_keeps_numbers_when_duplicated_and_waits_for_processing(client)
     assert db.get_recording(a) and db.get_recording(c)["session_number"] == 3
     # Elle-même en traitement : pas de corbeille active.
     assert "Traitement en cours : suppression impossible" in client.get("/enregistrements").text
+
+
+def test_process_all_launches_every_ready_session(client, monkeypatch):
+    sid = subjects.create_subject("Graphes")
+    ready = []
+    for day in ("2026-09-21", "2026-09-28"):
+        rid = recorder.create_recording(subject_id=sid, course_type="CM", session_date=day)
+        db.update_recording(rid, status="uploaded", auto_retry_count=2)
+        ready.append(rid)
+    done_recording(sid)
+    page = client.get("/enregistrements").text
+    assert "Tout traiter (2)" in page and "Lancer le traitement des 2 s\\u00e9ances" in page  # confirmation (JSON)
+
+    submitted = []
+    monkeypatch.setattr(pl.pipeline, "submit", lambda kind, target, action, chain=True: submitted.append((target, action, chain)))
+    r = client.post("/enregistrements/tout-traiter", follow_redirects=False)
+    assert parse_qs(urlparse(r.headers["location"]).query)["msg"][0].startswith("Traitement lancé pour 2 séances")
+    assert submitted == [(rid, "transcribe", True) for rid in ready]  # la plus ancienne d'abord
+    assert all(db.get_recording(rid)["auto_retry_count"] == 0 for rid in ready)
+
+    # Déjà en file : plus de bouton, et un second clic ne les relance pas.
+    monkeypatch.setattr(pl.pipeline, "is_active", lambda rid: rid in ready)
+    assert "Tout traiter" not in client.get("/enregistrements").text
+    r = client.post("/enregistrements/tout-traiter", follow_redirects=False)
+    assert parse_qs(urlparse(r.headers["location"]).query)["msg"] == ["Aucune séance prête à traiter."]
+    assert len(submitted) == 2

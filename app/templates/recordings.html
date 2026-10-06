@@ -6,6 +6,16 @@
     <h1>Historique</h1>
     <p class="muted">Tous vos enregistrements et l'avancement de leur traitement.</p>
   </div>
+  {% if n_ready %}
+  {%- set question = ('Lancer le traitement des %d séances prêtes ?\n\nElles seront transcrites puis déposées dans Drive, '
+      ~ 'une à la fois.') % n_ready if n_ready > 1
+      else 'Lancer le traitement de la séance prête ?\n\nElle sera transcrite puis déposée dans Drive.' %}
+  <div class="actions">
+    <form method="post" action="/enregistrements/tout-traiter" class="inline-form" onsubmit='return confirm({{ question|tojson }})'>
+      <button class="primary"><span aria-hidden="true">▶</span> Tout traiter ({{ n_ready }})</button>
+    </form>
+  </div>
+  {% endif %}
 </div>
 <div class="card flush table-wrap">
   <table class="list">
