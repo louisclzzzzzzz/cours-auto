@@ -9,16 +9,20 @@
 {%- set gd = ('warn', 'Lecture des cours non autorisée') if drive_status.connected and not drive_status.can_read
     else ('ok', drive_status.message) if drive_status.connected else ('warn', 'Non connecté') if drive_status.configured else ('err', 'Non configuré') -%}
 {%- set ms = ('ok', 'Clé présente') if mistral_key else ('err', 'Clé absente') -%}
+{%- set ar = ('warn', 'Désactivé') if not archive.enabled
+    else ('warn', 'Drive non connecté') if not drive_status.connected
+    else ('warn', 'Autorisation à compléter') if drive_status.can_archive is defined and not drive_status.can_archive
+    else ('ok', 'Actif') -%}
 <div class="narrow">
 <div class="page-head">
   <div>
     <h1>Paramètres</h1>
-    <p class="muted">Emploi du temps, Google Drive et transcription.</p>
+    <p class="muted">Emploi du temps, Google Drive, archivage de l'audio et transcription.</p>
   </div>
 </div>
 
 <ul class="status-chips" aria-label="État de la configuration">
-  {% for anchor, label, st in [('edt', 'Emploi du temps', edt), ('drive', 'Google Drive', gd), ('mistral', 'Mistral', ms)] %}
+  {% for anchor, label, st in [('edt', 'Emploi du temps', edt), ('drive', 'Google Drive', gd), ('archivage', 'Archivage audio', ar), ('mistral', 'Mistral', ms)] %}
   <li><a class="badge {{ st[0] }}" href="#{{ anchor }}">{{ '✓' if st[0] == 'ok' else '!' }} {{ label }}<span class="visually-hidden"> : {{ st[1] }}</span></a></li>
   {% endfor %}
 </ul>
@@ -92,8 +96,8 @@
         <li><a href="{{ drive_links.api }}" target="_blank" rel="noopener">API Google Drive</a> : cliquez sur « Activer ».</li>
         <li><a href="{{ drive_links.audience }}" target="_blank" rel="noopener">Audience</a> : « Publier l'application » (Production).
           À défaut, ajoutez votre adresse Gmail dans « Utilisateurs test » (l'autorisation expirera alors tous les 7 jours).</li>
-        <li><a href="{{ drive_links.scopes }}" target="_blank" rel="noopener">Accès aux données</a> : ajoutez les scopes <code>…/auth/drive.file</code>
-          (dépôt des transcriptions) et <code>…/auth/drive.readonly</code> (lecture des cours écrits par Claude).</li>
+        <li><a href="{{ drive_links.scopes }}" target="_blank" rel="noopener">Accès aux données</a> : ajoutez le scope <code>…/auth/drive</code>
+          (dépôt des transcriptions, lecture des cours écrits par Claude, archivage de l'audio dans votre dossier Z-Data).</li>
         <li><a href="{{ drive_links.clients }}" target="_blank" rel="noopener">Clients</a> : type « Application de bureau », JSON enregistré sous <code>credentials.json</code> à la racine du projet.</li>
         <li>Si Google affiche « Google n'a pas validé cette application », cliquez sur « Continuer » : c'est normal pour une application personnelle.</li>
       </ol>
@@ -105,6 +109,52 @@
       <div class="field"><label for="drive_root_name">Nom du dossier racine</label>
         <input type="text" id="drive_root_name" name="drive_root_name" value="{{ s.drive_root_name }}"></div>
       <button>Enregistrer</button>
+    </form>
+  </details>
+</section>
+
+<section class="card" id="archivage" aria-labelledby="archivage-title">
+  <div class="card-head">
+    <h2 id="archivage-title"><span aria-hidden="true">🗄️</span> Archivage de l'audio</h2>
+    {{ state(*ar) }}
+  </div>
+  <p class="small muted">Quand une séance est traitée, son audio final (et le fichier importé, le cas échéant) est envoyé dans Drive
+    (<code>{{ s.drive_root_name }} / {{ s.audio_archive_folder }} / recordings / n° de séance</code>), vérifié, puis <strong>supprimé de ce Mac</strong>
+    pour libérer de la place ; les morceaux bruts de l'enregistrement sont simplement supprimés. Transcriptions, supports et cours restent ici. Passage au lancement de l'app, puis chaque soir
+    à partir de {{ archive.hour }} h tant que l'app est ouverte. L'audio d'une séance pas encore traitée n'est jamais archivé.</p>
+  {% if drive_status.connected and drive_status.can_archive is defined and not drive_status.can_archive %}
+    <p class="notice small">L'archivage a besoin de l'accès complet à Drive pour écrire dans votre dossier <code>{{ s.audio_archive_folder }}</code>.
+      Ajoutez le scope <code>…/auth/drive</code> dans <a href="{{ drive_links.scopes }}" target="_blank" rel="noopener">Accès aux données</a>,
+      puis <a href="#drive">déconnectez et reconnectez Drive</a> en laissant cochée l'autorisation d'accéder à vos fichiers.</p>
+  {% endif %}
+  <ul class="small">
+    <li>À archiver maintenant : <strong>{{ archive.pending }}</strong></li>
+    <li>Déjà archivés : <strong>{{ archive.archived }}</strong>{% if archive.archived %} ({{ archive.bytes|size }} libérés){% endif %}</li>
+    {% if archive.waiting %}<li>{{ archive.waiting }} séance(s) pas encore traitée(s) ou en erreur : leur audio reste sur ce Mac.</li>{% endif %}
+  </ul>
+  {% if archive.running %}<p class="small"><span class="spinner" aria-hidden="true"></span> Archivage en cours… actualisez la page dans un instant.</p>
+  {% elif archive.last_at %}
+    <p class="small muted">Dernier passage {{ archive.last_at|when }} : {{ archive.last_result }}</p>
+    {% if archive.last_error and archive.last_error != archive.last_result %}<p class="small warn-text">{{ archive.last_error }}</p>{% endif %}
+  {% endif %}
+  <div class="actions">
+    <form method="post" action="/parametres/archivage/lancer" class="inline-form">
+      <button class="primary" {{ 'disabled' if archive.running or not drive_status.connected }}>Archiver maintenant</button>
+    </form>
+    {% if archive.folder_url %}<a class="btn ext" href="{{ archive.folder_url }}" target="_blank" rel="noopener">Ouvrir {{ s.audio_archive_folder }}</a>{% endif %}
+  </div>
+  <details class="more">
+    <summary>Options</summary>
+    <form method="post" action="/parametres/archivage">
+      <div class="field"><label class="check"><input type="checkbox" name="audio_archive" value="1" {{ 'checked' if archive.enabled }}>
+        Archiver automatiquement (au lancement et chaque soir)</label></div>
+      <div class="field-row">
+        <div class="field"><label for="audio_archive_folder">Dossier Drive (dans « {{ s.drive_root_name }} »)</label>
+          <input type="text" id="audio_archive_folder" name="audio_archive_folder" value="{{ s.audio_archive_folder }}"></div>
+        <div class="field"><label for="audio_archive_hour">Heure du passage du soir</label>
+          <input type="number" id="audio_archive_hour" name="audio_archive_hour" min="0" max="23" value="{{ s.audio_archive_hour }}"></div>
+      </div>
+      <button style="margin-top:0.85rem">Enregistrer</button>
     </form>
   </details>
 </section>

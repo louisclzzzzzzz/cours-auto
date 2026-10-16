@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import itertools
+import re
 from types import SimpleNamespace
 
 from googleapiclient.errors import HttpError
@@ -22,11 +24,22 @@ class FakeDriveFiles:
     def __init__(self, store: dict, log: list):
         self.store = store
         self.log = log
+        self.corrupt_uploads = False  # Drive annonce une somme MD5 différente de celle du fichier envoyé
         self._ids = itertools.count(1)
         self._clock = itertools.count(1)
 
     def _public(self, f: dict) -> dict:
-        return {k: f[k] for k in ("id", "name", "mimeType", "trashed", "webViewLink", "modifiedTime")}
+        public = {k: f[k] for k in ("id", "name", "mimeType", "trashed", "webViewLink", "modifiedTime")}
+        content = f.get("content")
+        if isinstance(content, bytes):  # fichiers « binaires » : Drive calcule taille et MD5
+            public["size"] = str(len(content))
+            public["md5Checksum"] = f.get("md5") or hashlib.md5(content).hexdigest()
+        return public
+
+    def _seal(self, f: dict) -> None:
+        """Drive calcule la somme MD5 à l'envoi (ici fausse si `corrupt_uploads`) et ne la recalcule pas ensuite."""
+        if isinstance(f.get("content"), bytes):
+            f["md5"] = "bad" if self.corrupt_uploads and f.get("source_mime") else hashlib.md5(f["content"]).hexdigest()
 
     def _touch(self, f: dict) -> None:
         f["modifiedTime"] = f"2026-10-06T00:00:{next(self._clock):02d}.000Z"
@@ -49,6 +62,7 @@ class FakeDriveFiles:
                 "content": media_body.getbytes(0, media_body.size()) if media_body else None,
                 "source_mime": media_body.mimetype() if media_body else None,
             }
+            self._seal(f)
             self._touch(f)
             self.store[fid] = f
             self.log.append(("create", fid, body["name"]))
@@ -60,19 +74,28 @@ class FakeDriveFiles:
             f = self.store[fileId]
             if body and "name" in body:
                 f["name"] = body["name"]
+            if body and "trashed" in body:
+                f["trashed"] = body["trashed"]
             if media_body is not None:
                 f["content"] = media_body.getbytes(0, media_body.size())
                 f["source_mime"] = media_body.mimetype()
+                self._seal(f)
             self._touch(f)
             self.log.append(("update", fileId, f["name"]))
             return self._public(f)
         return _Req(run)
 
-    def list(self, q, pageSize=None, pageToken=None, fields=None):
-        parent = q.split("'")[1]  # « '<id>' in parents and trashed = false »
+    def list(self, q, pageSize=None, pageToken=None, fields=None, orderBy=None):
+        parent = q.split("'")[1]  # « '<id>' in parents and trashed = false [and name = '…'] [and mimeType = '…'] »
+        name = re.search(r"name = '((?:[^'\\]|\\.)*)'", q)
+        name = re.sub(r"\\(.)", r"\1", name.group(1)) if name else None
+        mime = re.search(r"mimeType (=|!=) '([^']*)'", q)
+
         def run():
-            files = [self._public(f) for f in self.store.values() if parent in f["parents"] and not f["trashed"]]
-            return {"files": files}
+            files = [f for f in self.store.values() if parent in f["parents"] and not f["trashed"]
+                     and (name is None or f["name"] == name)
+                     and (mime is None or (f["mimeType"] == mime.group(2)) == (mime.group(1) == "="))]
+            return {"files": [self._public(f) for f in files]}
         return _Req(run)
 
     def get_media(self, fileId):
@@ -105,9 +128,38 @@ class FakeDriveService:
         self.store[fid] = f
         return f
 
+    def add_folder(self, name: str, parent: str | None = None) -> dict:
+        """Dossier créé à la main dans Drive (hors de l'app)."""
+        fid = f"man{next(self._files._ids)}"
+        f = {"id": fid, "name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent] if parent else [],
+             "trashed": False, "webViewLink": f"https://drive.example/{fid}", "content": None, "source_mime": None}
+        self._files._touch(f)
+        self.store[fid] = f
+        return f
+
+    def add_blob(self, name: str, parent: str, content: bytes) -> dict:
+        """Fichier envoyé à la main dans Drive (hors de l'app)."""
+        f = self.add_folder(name, parent)
+        f.update(mimeType="application/octet-stream", content=content, md5=hashlib.md5(content).hexdigest())
+        return f
+
+    def children(self, parent: str) -> list[dict]:
+        return sorted((f for f in self.store.values() if parent in f["parents"] and not f["trashed"]), key=lambda f: f["name"])
+
     def rewrite_external(self, fid: str, content: str) -> None:
         self.store[fid]["content"] = content.encode("utf-8")
         self._files._touch(self.store[fid])
+
+
+class FakeDownloader:
+    """Remplace `MediaIoBaseDownload` : le faux service renvoie le contenu d'un coup."""
+
+    def __init__(self, fd, request, chunksize=None):
+        self.fd, self.request = fd, request
+
+    def next_chunk(self, num_retries=0):
+        self.fd.write(self.request.execute())
+        return None, True
 
 
 # --- Document de test (support de cours) --------------------------------------------------------

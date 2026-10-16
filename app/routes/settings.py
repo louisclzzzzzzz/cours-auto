@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
 
-from .. import calendar_ics, config, db, recorder, transcribe
+from .. import archive, calendar_ics, config, db, recorder, transcribe
 from ..pipeline import pipeline
 from ..publish import drive
 from ..web import redirect, render
@@ -35,6 +35,7 @@ def settings_page(request: Request, check: bool = False):
         drive_client_type=drive.client_type(),
         drive_failed=db.q1("SELECT COUNT(*) AS n FROM recordings WHERE drive_status = 'error'")["n"],
         drive_root_url=db.get_setting("drive_root_url"),
+        archive=archive.status(),
         mistral_key=bool(config.mistral_api_key()),
         ics_last=db.get_setting("ics_last_refresh"),
         ics_error=db.get_setting("ics_last_error"),
@@ -93,12 +94,41 @@ def save_drive(drive_root_name: str = Form("Cours M1")):
     return redirect("/parametres#drive", "Options Drive enregistrées.")
 
 
+@router.post("/parametres/archivage")
+def save_archive(audio_archive: str = Form(""), audio_archive_folder: str = Form("Z-Data"),
+                 audio_archive_hour: str = Form("21")):
+    try:
+        hour = int(audio_archive_hour)
+        if not 0 <= hour <= 23:
+            raise ValueError
+    except ValueError:
+        return redirect("/parametres#archivage", "Heure invalide (0 à 23).", "err")
+    folder = " ".join(audio_archive_folder.split())
+    if not folder or "/" in folder:
+        return redirect("/parametres#archivage", "Nom de dossier invalide.", "err")
+    db.set_setting("audio_archive", "1" if audio_archive else "0")
+    db.set_setting("audio_archive_folder", folder)
+    db.set_setting("audio_archive_hour", str(hour))
+    archive.reset()  # nouveau dossier ou nouvelle heure : prochain passage dès que possible
+    return redirect("/parametres#archivage", "Réglages de l'archivage enregistrés.")
+
+
+@router.post("/parametres/archivage/lancer")
+def run_archive():
+    if not drive.is_configured() or not config.TOKEN_FILE.exists():
+        return redirect("/parametres#archivage", "Google Drive n'est pas connecté.", "err")
+    if not archive.start_now(pipeline):
+        return redirect("/parametres#archivage", "Un archivage est déjà en cours.", "err")
+    return redirect("/parametres#archivage", "Archivage lancé : le résultat s'affiche ici dans quelques instants.")
+
+
 def _requeue_failed_drive() -> None:
     """Après connexion : redépose dans Drive les séances dont le dépôt avait échoué, et récupère les cours."""
     for rec in db.q("SELECT id FROM recordings WHERE drive_status = 'error'"):
         if (recorder.recording_dir(rec["id"]) / "transcript.txt").exists():
             pipeline.submit("recording", rec["id"], "publish", chain=False)
     drive.sync_state["at"] = 0.0  # prochaine récupération des cours dès le prochain passage de la file
+    archive.reset()  # et prochain archivage de l'audio
 
 
 def _drive_auth_fragment(request: Request):

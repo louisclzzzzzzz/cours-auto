@@ -134,6 +134,15 @@ MIGRATIONS: dict[str, dict[str, str]] = {
         "auto_retry_count": "INTEGER NOT NULL DEFAULT 0",
         # Cours rédigé par la tâche Claude (drive_md_id) : date de modification de la version récupérée
         "drive_md_modified": "TEXT",
+        # Audio archivé dans Drive (<Z-Data>/recordings/<id>/) puis supprimé du disque
+        "audio_drive_id": "TEXT",
+        "audio_drive_url": "TEXT",
+        "audio_drive_folder_id": "TEXT",
+        "audio_drive_folder_url": "TEXT",
+        "audio_archived_at": "TEXT",
+        "audio_archived_bytes": "INTEGER NOT NULL DEFAULT 0",
+        "audio_restored_at": "TEXT",  # rapatrié à la main : gardé sur le disque quelques jours (archive.RESTORE_KEEP)
+        "audio_archive_error": "TEXT",
     },
     "subjects": {
         "drive_transcriptions_folder_id": "TEXT",

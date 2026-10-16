@@ -23,6 +23,24 @@
 <section class="card" aria-labelledby="audio-title">
   <h2 id="audio-title">Audio</h2>
   <audio controls preload="none" src="/enregistrements/{{ rec.id }}/audio" style="width:100%"></audio>
+  {% if rec.audio_restored_at and rec.audio_drive_url %}
+    <p class="small muted">Restauré depuis Drive le {{ rec.audio_restored_at|when }} : il sera de nouveau archivé et supprimé de ce Mac
+      après quelques jours. <a class="ext" href="{{ rec.audio_drive_url }}" target="_blank" rel="noopener">Copie dans Drive</a></p>
+  {% endif %}
+</section>
+{% elif files.archived %}
+<section class="card" aria-labelledby="audio-title">
+  <h2 id="audio-title">Audio</h2>
+  <p>Archivé dans Drive{% if rec.audio_archived_at %} le {{ rec.audio_archived_at|when }}{% endif %}{% if rec.audio_archived_bytes %}
+    ({{ rec.audio_archived_bytes|size }} libérés sur ce Mac){% endif %}. La transcription, les supports et le cours restent ici.</p>
+  {% if rec.audio_archive_error %}<p class="small warn-text">{{ rec.audio_archive_error }}</p>{% endif %}
+  <div class="actions">
+    {% if rec.audio_drive_url %}<a class="btn ext" href="{{ rec.audio_drive_url }}" target="_blank" rel="noopener">Ouvrir dans Drive</a>{% endif %}
+    <form method="post" action="/enregistrements/{{ rec.id }}/audio/restaurer" class="inline-form">
+      <button {{ 'disabled' if busy }}>Restaurer l'audio sur ce Mac</button>
+    </form>
+  </div>
+  <p class="small muted">Une nouvelle transcription le rapatrie automatiquement.</p>
 </section>
 {% endif %}
 
@@ -60,20 +78,22 @@
     <li>
       <div><strong>Audio</strong>
         <p class="small muted">
-          {%- if rec.status == 'interrupted' %}Assemble l'audio déjà reçu (le traitement se lance ensuite à la main).
+          {%- if files.raw_gone %}Les morceaux bruts ont été supprimés après l'archivage : seul l'audio final est conservé (dans Drive, restaurable).
+          {%- elif rec.status == 'interrupted' %}Assemble l'audio déjà reçu (le traitement se lance ensuite à la main).
           {%- elif not files.chunks.n and files.source %}Reconvertit le fichier importé ({{ rec.source_filename }}).
           {%- else %}Réassemble les {{ files.chunks.n }} morceaux reçus ({{ (files.chunks.total / 1048576)|round(1) }} Mo).{% endif %}</p></div>
       <form method="post" action="/enregistrements/{{ rec.id }}/action">
         <input type="hidden" name="action" value="finalize">
-        <button {{ 'disabled' if busy or not (files.chunks.n or files.source) }}>
+        <button {{ 'disabled' if busy or files.raw_gone or not (files.chunks.n or files.source) }}>
           {%- if rec.status == 'interrupted' %}Terminer tel quel{% elif not files.chunks.n and files.source %}Refaire la conversion{% else %}Refaire l'assemblage{% endif %}</button>
       </form>
     </li>
     <li>
-      <div><strong>Transcription</strong><p class="small muted">Nouvel envoi à Voxtral (avec le vocabulaire de la matière), puis dépôt dans Drive.</p></div>
+      <div><strong>Transcription</strong><p class="small muted">Nouvel envoi à Voxtral (avec le vocabulaire de la matière), puis dépôt dans Drive.
+        {%- if files.archived %} L'audio archivé est rapatrié automatiquement.{% endif %}</p></div>
       <form method="post" action="/enregistrements/{{ rec.id }}/action">
         <input type="hidden" name="action" value="transcribe">
-        <button {{ 'disabled' if busy or not files.audio }}>Relancer</button>
+        <button {{ 'disabled' if busy or not (files.audio or files.archived) }}>Relancer</button>
       </form>
     </li>
     <li>

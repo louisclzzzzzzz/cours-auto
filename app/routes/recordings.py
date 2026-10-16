@@ -6,7 +6,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 
-from .. import config, db, recorder, subjects, supports
+from .. import archive, config, db, recorder, subjects, supports
 from ..markdown_utils import replace_title
 from ..pipeline import BUSY_STATUSES, STEP_LABELS, pipeline
 from ..publish import drive
@@ -32,12 +32,15 @@ def _get(rid: int) -> dict:
     return rec
 
 
-def _files(rid: int) -> dict:
+def _files(rec: dict) -> dict:
+    rid = rec["id"]
     folder = recorder.recording_dir(rid)
     source = recorder.source_path(rid)
     return {
         "source": source.name if source else None,
         "audio": recorder.audio_path(rid).exists(),
+        "archived": archive.is_archived(rec),  # audio dans Drive (Z-Data), plus sur le disque
+        "raw_gone": archive.raw_audio_gone(rec),  # morceaux bruts supprimés après l'archivage
         "transcript": (folder / "transcript.txt").exists(),
         "course": subjects.course_path(rid).exists(),
         "chunks": db.chunk_stats(rid),
@@ -55,7 +58,7 @@ def progress_steps(rec: dict, files: dict) -> list[dict]:
     status = rec["status"]
     running = RUNNING_STEP.get(status)
     failed = FAILED_STEP.get(rec.get("error_step") or "") if status == "error" else None
-    done = [files["audio"], files["transcript"], rec["drive_status"] == "done", files["course"]]
+    done = [files["audio"] or files["archived"], files["transcript"], rec["drive_status"] == "done", files["course"]]
     steps = []
     for i, label in enumerate(STEPS):
         if running is not None:
@@ -67,7 +70,9 @@ def progress_steps(rec: dict, files: dict) -> list[dict]:
         steps.append({"label": label, "state": state})
     if status == "interrupted":
         steps[0]["state"] = "warn"
-    if files["audio"] and rec.get("duration_seconds"):
+    if files["archived"]:
+        steps[0]["detail"] = "archivé dans Drive"
+    elif files["audio"] and rec.get("duration_seconds"):
         steps[0]["detail"] = fmt_duration(rec["duration_seconds"])
     if steps[2]["state"] == "done" and steps[3]["state"] == "todo":
         steps[3]["detail"] = "en attente de la tâche Claude"
@@ -85,7 +90,7 @@ def retry_action(rec: dict) -> str | None:
 
 def status_context(rec: dict) -> dict:
     rid = rec["id"]
-    files = _files(rid)
+    files = _files(rec)
     current = pipeline.current if pipeline.current and pipeline.current.get("recording_id") == rid else None
     return {
         "rec": rec,
@@ -172,8 +177,29 @@ def delete_support(rid: int, sid: int):
 def audio(rid: int):
     path = recorder.audio_path(rid)
     if not path.exists():
+        if archive.is_archived(_get(rid)):
+            raise HTTPException(404, "Audio archivé dans Drive : restaurez-le d'abord (page de la séance).")
         raise HTTPException(404, "Audio final pas encore disponible.")
     return FileResponse(path, media_type="audio/mpeg", filename=f"enregistrement_{rid}.mp3")
+
+
+@router.post("/enregistrements/{rid}/audio/restaurer")
+def restore_audio(rid: int):
+    """Rapatrie l'audio archivé dans Drive (écoute, nouvelle transcription). Il reste sur le disque quelques jours."""
+    rec = _get(rid)
+    target = f"/enregistrements/{rid}#audio-title"
+    if not rec.get("audio_drive_id"):
+        return redirect(target, "Cet enregistrement n'a pas d'audio archivé dans Drive.", "err")
+    if not pipeline.hold(rid):
+        return redirect(target, "Un traitement est en cours pour cet enregistrement : réessayez dans un instant.", "err")
+    try:
+        archive.restore_audio(rid)
+    except Exception as exc:  # noqa: BLE001 - Drive non connecté, hors ligne, fichier supprimé…
+        return redirect(target, f"Restauration impossible : {exc}", "err")
+    finally:
+        pipeline.release(rid)
+    days = archive.RESTORE_KEEP.days
+    return redirect(target, f"Audio restauré. Il reste sur ce Mac {days} jours avant d'être de nouveau archivé dans Drive.")
 
 
 @router.get("/enregistrements/{rid}/transcription.txt")
@@ -202,6 +228,9 @@ def run_action(rid: int, action: str = Form(...), back: str = Form("")):
         return redirect(target, "Un traitement est déjà en cours pour cet enregistrement.", "err")
     if rec["status"] == "recording" and action != "finalize":
         return redirect(target, "Enregistrement en cours : arrêtez-le ou finalisez-le d'abord.", "err")
+    if action == "finalize" and archive.raw_audio_gone(rec):
+        return redirect(target, "Les morceaux bruts ont été supprimés après l'archivage de l'audio : l'assemblage ne peut plus être "
+                                "refait, l'audio final est conservé dans Drive (restaurez-le si besoin).", "err")
     if action == "finalize" and rec["status"] == "recording" and rec.get("client_state") != "stopped":
         db.log(rid, "Finalisation forcée d'un enregistrement encore marqué actif.", "warning")
     if action == "finalize":
@@ -266,7 +295,7 @@ def _refresh_headers(rid: int, before: dict) -> None:
 
 
 def _deposited(rec: dict) -> bool:
-    return bool(rec.get("drive_transcription_id") or rec.get("drive_md_id"))
+    return bool(rec.get("drive_transcription_id") or rec.get("drive_md_id") or rec.get("audio_drive_id"))
 
 
 @router.post("/enregistrements/{rid}/delete")

@@ -37,6 +37,10 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "transcription_language": "fr",
     "audio_bitrate": "48k",
     "drive_root_name": "Cours M1",
+    # Audio envoyé dans <racine Drive>/<audio_archive_folder>/recordings/<id> puis supprimé du disque (voir archive.py)
+    "audio_archive": "1",
+    "audio_archive_folder": "Z-Data",
+    "audio_archive_hour": "21",
     "consent_reminder_dismissed": "0",
 }
 

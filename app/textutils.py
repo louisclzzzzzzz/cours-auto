@@ -108,3 +108,13 @@ def fmt_when(value: str | datetime | None) -> str:
 
 def normalize_spaces(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
+
+
+def fmt_size(size: float | int | None) -> str:
+    """Taille lisible en français : « 850 Ko », « 12,5 Mo », « 1,4 Go »."""
+    size = float(size or 0)
+    if size < 1024 * 1024:
+        return f"{max(round(size / 1024), 0)} Ko"
+    if size < 1024 ** 3:
+        return f"{size / 1024 ** 2:.1f}".replace(".", ",") + " Mo"
+    return f"{size / 1024 ** 3:.1f}".replace(".", ",") + " Go"

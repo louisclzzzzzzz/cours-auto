@@ -19,7 +19,7 @@ import traceback
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from . import db, recorder, retry, subjects, transcribe
+from . import archive, db, recorder, retry, subjects, transcribe
 from .publish import PublishSkipped
 from .publish import drive as drive_pub
 
@@ -85,6 +85,7 @@ class Pipeline:
     def __init__(self) -> None:
         self._queue: queue.Queue[Job] = queue.Queue()
         self._pending: set[tuple] = set()
+        self._held: set[int] = set()  # séances réservées pendant l'archivage de leur audio (voir hold)
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -108,17 +109,33 @@ class Pipeline:
     def submit(self, kind: str, target: int, action: str, chain: bool = True) -> bool:
         key = (kind, target, action)
         with self._lock:
-            if key in self._pending:
+            if key in self._pending or (kind == "recording" and target in self._held):
                 return False
             self._pending.add(key)
         self._queue.put(Job(kind, target, action, chain))
         return True
 
+    def _busy(self, recording_id: int) -> bool:  # verrou déjà pris
+        if self.current and self.current.get("recording_id") == recording_id:
+            return True
+        return recording_id in self._held or any(k[0] == "recording" and k[1] == recording_id for k in self._pending)
+
     def is_active(self, recording_id: int) -> bool:
         with self._lock:
-            if self.current and self.current.get("recording_id") == recording_id:
-                return True
-            return any(k[0] == "recording" and k[1] == recording_id for k in self._pending)
+            return self._busy(recording_id)
+
+    def hold(self, recording_id: int) -> bool:
+        """Réserve une séance le temps d'archiver son audio : refusé si un traitement la concerne ; tant qu'elle est
+        réservée, elle compte comme active (aucun traitement ne peut démarrer sur un audio en cours de suppression)."""
+        with self._lock:
+            if self._busy(recording_id):
+                return False
+            self._held.add(recording_id)
+            return True
+
+    def release(self, recording_id: int) -> None:
+        with self._lock:
+            self._held.discard(recording_id)
 
     def queued_count(self) -> int:
         return self._queue.qsize()
@@ -181,6 +198,10 @@ class Pipeline:
             drive_pub.fetch_courses_if_due()  # cours rédigés par la tâche Claude
         except Exception:  # noqa: BLE001
             log.exception("Récupération des cours depuis Drive impossible")
+        try:
+            archive.sweep_if_due(self)  # audio des séances traitées : envoyé dans Drive puis supprimé du disque
+        except Exception:  # noqa: BLE001
+            log.exception("Archivage de l'audio impossible")
 
     def submit_due_retries(self) -> list[int]:
         """Relance les étapes en échec dont l'essai automatique est arrivé à échéance."""
@@ -267,9 +288,12 @@ class Pipeline:
         if not subject:
             raise RuntimeError("Aucune matière associée : choisissez-en une avant de transcrire.")
         audio = recorder.audio_path(rid)
-        if not audio.exists():
+        if not audio.exists() and not rec.get("audio_drive_id"):
             raise RuntimeError("Audio final absent : relancez d'abord la finalisation.")
         db.update_recording(rid, status="transcribing", error_step=None, error_message=None)
+        if not audio.exists():  # archivé dans Drive pour libérer le disque : rapatrié le temps de la transcription
+            self._progress(rid, "Audio archivé dans Drive : rapatriement avant la transcription…")
+            archive.restore_audio(rid)
         if rec.get("auto_retry_count"):
             self._progress(rid, "Mistral était indisponible : vérification qu'il répond de nouveau…")
             try:
