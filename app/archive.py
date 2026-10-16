@@ -4,11 +4,13 @@ Une fois une séance traitée (transcrite et déposée dans Drive), son audio n'
 `<racine Drive>/Z-Data/recordings/<id de la séance>/`, est vérifié (somme MD5 calculée par Drive) puis supprimé du
 disque. La transcription, les supports et le cours restent en local.
 
-Contenu archivé d'une séance : `audio.mp3` (l'audio final), `source.<ext>` (fichier importé, tel quel) et
-`chunks.zip` (morceaux bruts reçus du navigateur, regroupés sans compression). Rien n'est supprimé en local avant
-que *tous* ces fichiers soient vérifiés dans Drive, et rien n'est jamais supprimé ni écrasé dans Drive : un fichier
-déjà présent et identique (envoi à la main, essai précédent) est simplement reconnu, un fichier différent de même nom
-laisse la place à une copie `audio_2.mp3`.
+Contenu archivé d'une séance : `audio.mp3` (l'audio final) et, pour une séance importée, `source.<ext>` (le fichier
+d'origine, tel quel). Les morceaux bruts reçus du navigateur (`chunk_XXXX.webm`) ne sont **pas** envoyés : une fois
+l'audio final vérifié dans Drive, ils sont simplement supprimés du disque (la transcription ne se sert que de l'audio
+final ; seul l'assemblage ne peut plus être refait, l'audio final se restaure). Rien n'est supprimé en local avant que
+l'audio final et le fichier importé soient vérifiés dans Drive, et rien n'est jamais supprimé ni écrasé dans Drive :
+un fichier déjà présent et identique (envoi à la main, essai précédent) est simplement reconnu, un fichier différent de
+même nom laisse la place à une copie `audio_2.mp3`.
 
 Quand : au lancement de l'app, puis chaque soir (à partir de l'heure réglée) tant que l'app tourne, et à la demande
 (Paramètres). L'audio d'une séance pas encore traitée n'est jamais archivé : la transcription en a besoin. Si une
@@ -21,10 +23,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import mimetypes
-import shutil
 import threading
 import time
-import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Protocol
@@ -38,7 +38,6 @@ log = logging.getLogger(__name__)
 
 RECORDINGS_FOLDER = "recordings"
 AUDIO_NAME = recorder.AUDIO_FILENAME
-CHUNKS_ARCHIVE = "chunks.zip"
 RESTORE_KEEP = timedelta(days=2)
 RETRY_AFTER_ERROR_S = 3600
 MAX_CONSECUTIVE_ERRORS = 3
@@ -78,19 +77,6 @@ def file_md5(path: Path) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
-def _zip_chunks(rid: int, chunks: list[Path]) -> Path:
-    """Morceaux regroupés dans un seul fichier. Dates et ordre fixes : deux archives du même contenu sont identiques
-    octet pour octet, ce qui permet de reconnaître un envoi précédent."""
-    tmp = recorder.recording_dir(rid) / "_chunks.zip.part"
-    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED, allowZip64=True) as zf:
-        for path in chunks:
-            info = zipfile.ZipInfo(path.name, date_time=(1980, 1, 1, 0, 0, 0))
-            info.compress_type = zipfile.ZIP_STORED
-            with path.open("rb") as src, zf.open(info, "w", force_zip64=True) as dst:
-                shutil.copyfileobj(src, dst, 1024 * 1024)
-    return tmp
-
-
 # --- Qui archiver -----------------------------------------------------------------------------------
 
 def _parse(value: str | None) -> datetime | None:
@@ -103,6 +89,15 @@ def _parse(value: str | None) -> datetime | None:
 def is_archived(rec: dict) -> bool:
     """Audio dans Drive et plus sur le disque."""
     return bool(rec.get("audio_drive_id")) and not recorder.audio_path(rec["id"]).exists()
+
+
+def raw_audio_gone(rec: dict) -> bool:
+    """Séance archivée dont les morceaux bruts et le fichier importé ne sont plus sur le disque : l'assemblage ne peut
+    plus être refait (même si l'audio final a été restauré), seul l'audio final existe."""
+    if not rec.get("audio_drive_id"):
+        return False
+    files = audio_files(rec["id"])
+    return not files["chunks"] and not files["sources"]
 
 
 def eligible(now: datetime | None = None) -> list[dict]:
@@ -178,16 +173,10 @@ def archive_recording(rid: int, client: drive_pub.DriveClient, recordings_folder
     folder = client.ensure_named_folder(str(rid), recordings_folder["id"], rec.get("audio_drive_folder_id"))
 
     uploads = [(AUDIO_NAME, files["final"]), *[(p.name, p) for p in files["sources"]]]
-    zipped = _zip_chunks(rid, files["chunks"]) if files["chunks"] else None
-    try:
-        if zipped:
-            uploads.append((CHUNKS_ARCHIVE, zipped))
-        uploaded = {name: _upload_verified(client, folder["id"], name, path) for name, path in uploads}
-    finally:
-        if zipped:
-            zipped.unlink(missing_ok=True)
+    uploaded = {name: _upload_verified(client, folder["id"], name, path) for name, path in uploads}
 
-    # Tout est vérifié dans Drive : l'adresse de l'audio est enregistrée *avant* de supprimer quoi que ce soit.
+    # Audio final (et fichier importé) vérifiés dans Drive : l'adresse de l'audio est enregistrée *avant* de supprimer
+    # quoi que ce soit. Les morceaux bruts, eux, ne sont pas envoyés : l'audio final les remplace.
     local = [*files["derived"], *files["sources"], *files["chunks"], files["final"]]  # audio final en dernier
     freed = sum(p.stat().st_size for p in local if p.exists())
     audio = uploaded[AUDIO_NAME]
@@ -198,7 +187,7 @@ def archive_recording(rid: int, client: drive_pub.DriveClient, recordings_folder
     for path in local:
         path.unlink(missing_ok=True)
     db.update_recording(rid, audio_archived_at=db.now_iso(), audio_restored_at=None)
-    db.log(rid, f"Audio archivé dans Drive ({fmt_size(freed)} libérés sur le disque).")
+    db.log(rid, f"Audio final archivé dans Drive ; morceaux bruts supprimés ({fmt_size(freed)} libérés sur le disque).")
     return {"rid": rid, "bytes": freed}
 
 

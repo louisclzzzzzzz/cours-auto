@@ -78,13 +78,13 @@
     <li>
       <div><strong>Audio</strong>
         <p class="small muted">
-          {%- if files.archived %}Audio archivé dans Drive, morceaux compris : restaurez-le plutôt que de le refaire.
+          {%- if files.raw_gone %}Les morceaux bruts ont été supprimés après l'archivage : seul l'audio final est conservé (dans Drive, restaurable).
           {%- elif rec.status == 'interrupted' %}Assemble l'audio déjà reçu (le traitement se lance ensuite à la main).
           {%- elif not files.chunks.n and files.source %}Reconvertit le fichier importé ({{ rec.source_filename }}).
           {%- else %}Réassemble les {{ files.chunks.n }} morceaux reçus ({{ (files.chunks.total / 1048576)|round(1) }} Mo).{% endif %}</p></div>
       <form method="post" action="/enregistrements/{{ rec.id }}/action">
         <input type="hidden" name="action" value="finalize">
-        <button {{ 'disabled' if busy or files.archived or not (files.chunks.n or files.source) }}>
+        <button {{ 'disabled' if busy or files.raw_gone or not (files.chunks.n or files.source) }}>
           {%- if rec.status == 'interrupted' %}Terminer tel quel{% elif not files.chunks.n and files.source %}Refaire la conversion{% else %}Refaire l'assemblage{% endif %}</button>
       </form>
     </li>

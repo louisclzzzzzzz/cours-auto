@@ -118,9 +118,9 @@
     <h2 id="archivage-title"><span aria-hidden="true">🗄️</span> Archivage de l'audio</h2>
     {{ state(*ar) }}
   </div>
-  <p class="small muted">Quand une séance est traitée, son audio (fichier final, fichier importé, morceaux bruts) est envoyé dans Drive
+  <p class="small muted">Quand une séance est traitée, son audio final (et le fichier importé, le cas échéant) est envoyé dans Drive
     (<code>{{ s.drive_root_name }} / {{ s.audio_archive_folder }} / recordings / n° de séance</code>), vérifié, puis <strong>supprimé de ce Mac</strong>
-    pour libérer de la place. Transcriptions, supports et cours restent ici. Passage au lancement de l'app, puis chaque soir
+    pour libérer de la place ; les morceaux bruts de l'enregistrement sont simplement supprimés. Transcriptions, supports et cours restent ici. Passage au lancement de l'app, puis chaque soir
     à partir de {{ archive.hour }} h tant que l'app est ouverte. L'audio d'une séance pas encore traitée n'est jamais archivé.</p>
   {% if drive_status.connected and drive_status.can_archive is defined and not drive_status.can_archive %}
     <p class="notice small">L'archivage a besoin de l'accès complet à Drive pour écrire dans votre dossier <code>{{ s.audio_archive_folder }}</code>.

@@ -40,6 +40,7 @@ def _files(rec: dict) -> dict:
         "source": source.name if source else None,
         "audio": recorder.audio_path(rid).exists(),
         "archived": archive.is_archived(rec),  # audio dans Drive (Z-Data), plus sur le disque
+        "raw_gone": archive.raw_audio_gone(rec),  # morceaux bruts supprimés après l'archivage
         "transcript": (folder / "transcript.txt").exists(),
         "course": subjects.course_path(rid).exists(),
         "chunks": db.chunk_stats(rid),
@@ -227,8 +228,9 @@ def run_action(rid: int, action: str = Form(...), back: str = Form("")):
         return redirect(target, "Un traitement est déjà en cours pour cet enregistrement.", "err")
     if rec["status"] == "recording" and action != "finalize":
         return redirect(target, "Enregistrement en cours : arrêtez-le ou finalisez-le d'abord.", "err")
-    if action == "finalize" and archive.is_archived(rec):
-        return redirect(target, "L'audio est archivé dans Drive (morceaux compris) : restaurez-le plutôt que de le refaire.", "err")
+    if action == "finalize" and archive.raw_audio_gone(rec):
+        return redirect(target, "Les morceaux bruts ont été supprimés après l'archivage de l'audio : l'assemblage ne peut plus être "
+                                "refait, l'audio final est conservé dans Drive (restaurez-le si besoin).", "err")
     if action == "finalize" and rec["status"] == "recording" and rec.get("client_state") != "stopped":
         db.log(rid, "Finalisation forcée d'un enregistrement encore marqué actif.", "warning")
     if action == "finalize":

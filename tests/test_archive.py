@@ -2,9 +2,7 @@
 rapatriement, planification (lancement + chaque soir) et affichage."""
 
 import hashlib
-import io
 import json
-import zipfile
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -82,14 +80,12 @@ def test_audio_is_sent_verified_then_removed_from_disk(drive):
     root, z_data, recordings, drive_folder = (svc.by_name(n) for n in ("Cours M1", "Z-Data", "recordings", str(rid)))
     assert z_data["parents"] == [root["id"]] and recordings["parents"] == [z_data["id"]]
     assert drive_folder["parents"] == [recordings["id"]]
-    assert [f["name"] for f in svc.children(drive_folder["id"])] == ["audio.mp3", "chunks.zip", "source.m4a"]
+    # L'audio final (et le fichier importé) sont dans Drive ; les morceaux bruts n'y sont pas envoyés.
+    assert [f["name"] for f in svc.children(drive_folder["id"])] == ["audio.mp3", "source.m4a"]
     audio = svc.by_name("audio.mp3")
     assert audio["content"] == AUDIO and audio["source_mime"] == "audio/mpeg"
     assert svc.by_name("source.m4a")["content"] == b"original-m4a" * 100
-    with zipfile.ZipFile(io.BytesIO(svc.by_name("chunks.zip")["content"])) as zf:
-        assert zf.namelist() == ["chunk_0001.webm", "chunk_0002.webm", "chunk_0003.webm"]
-        assert zf.read("chunk_0002.webm") == bytes([2]) * 200
-    # Disque libéré ; la transcription reste.
+    # Disque libéré (morceaux bruts supprimés compris) ; la transcription reste.
     assert sorted(p.name for p in folder.iterdir() if p.is_file()) == ["meta.json", "transcript.txt"]
     rec = db.get_recording(rid)
     assert rec["audio_drive_id"] == audio["id"] and rec["audio_drive_url"] == audio["webViewLink"]
@@ -98,6 +94,22 @@ def test_audio_is_sent_verified_then_removed_from_disk(drive):
     # Un second passage n'a plus rien à faire.
     n = len(svc.log)
     assert archive.sweep(pl.Pipeline(), client)["archived"] == 0 and len(svc.log) == n
+
+
+def test_raw_chunks_are_deleted_but_never_uploaded(drive):
+    svc, client = drive
+    rid = new_recording(chunks=4)
+    folder = recorder.recording_dir(rid)
+    assert len(list(folder.glob("chunk_*"))) == 4
+
+    assert archive.sweep(pl.Pipeline(), client)["archived"] == 1
+
+    assert not list(folder.glob("chunk_*")) and not recorder.audio_path(rid).exists()
+    assert [f["name"] for f in svc.children(svc.by_name(str(rid))["id"])] == ["audio.mp3"]
+    assert not [f for f in svc.store.values() if f["name"].endswith((".webm", ".zip"))]
+    rec = db.get_recording(rid)
+    assert archive.raw_audio_gone(rec) and rec["audio_archived_bytes"] == len(AUDIO) + 100 + 200 + 300 + 400
+    assert not archive.raw_audio_gone(db.get_recording(new_recording(chunks=2)))  # jamais archivée : morceaux conservés
 
 
 def test_audio_already_uploaded_by_hand_is_recognised_not_duplicated(drive, user_tree):
@@ -203,15 +215,6 @@ def test_pipeline_hold_blocks_processing_and_is_blocked_by_it():
     assert not p.hold(1)  # un traitement est en file : pas d'archivage
 
 
-def test_chunks_archive_is_identical_when_rebuilt(tmp_path):
-    rid = new_recording(chunks=3)
-    chunks = archive.audio_files(rid)["chunks"]
-    first = archive._zip_chunks(rid, chunks).read_bytes()
-    for c in chunks:
-        c.touch()  # autre date de modification
-    assert archive._zip_chunks(rid, chunks).read_bytes() == first
-
-
 # --- Rapatriement ----------------------------------------------------------------------------------------
 
 @pytest.fixture
@@ -239,7 +242,7 @@ def test_restore_brings_the_audio_back_and_keeps_it_for_a_few_days(drive, downlo
     assert archive.sweep(pl.Pipeline(), client, now=later)["archived"] == 1
     assert len(svc.log) == n and not recorder.audio_path(rid).exists()
     assert db.get_recording(rid)["audio_restored_at"] is None
-    assert db.get_recording(rid)["audio_archived_bytes"] > len(AUDIO)  # le total archivé (morceaux compris) n'est pas écrasé
+    assert db.get_recording(rid)["audio_archived_bytes"] > len(AUDIO)  # le total libéré (morceaux bruts compris) n'est pas écrasé
 
 
 def test_restore_rejects_a_corrupted_download(drive, downloads):
@@ -499,6 +502,18 @@ def test_detail_page_of_an_archived_recording(client, drive):
     r = client.post(f"/enregistrements/{rid}/action", data={"action": "finalize"}, follow_redirects=False)
     assert "level=err" in r.headers["location"] and "archiv" in r.headers["location"]
     assert db.get_recording(rid)["status"] == "done"
+
+
+def test_restored_recording_cannot_be_reassembled_from_deleted_chunks(client, drive, monkeypatch):
+    rid = archived_recording(drive)  # 2 morceaux supprimés après l'archivage
+    monkeypatch.setattr(archive, "restore_audio", lambda rid, client=None: recorder.audio_path(rid).write_bytes(AUDIO))
+    client.post(f"/enregistrements/{rid}/audio/restaurer")
+    assert recorder.audio_path(rid).exists() and not archive.is_archived(db.get_recording(rid))
+    page = client.get(f"/enregistrements/{rid}").text
+    assert "morceaux bruts ont été supprimés" in page  # le bouton « Refaire l'assemblage » est désactivé
+    r = client.post(f"/enregistrements/{rid}/action", data={"action": "finalize"}, follow_redirects=False)
+    assert "level=err" in r.headers["location"] and "archivage" in r.headers["location"]
+    assert db.get_recording(rid)["status"] == "done" and recorder.audio_path(rid).read_bytes() == AUDIO
 
 
 def test_restore_button(client, drive, monkeypatch):

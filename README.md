@@ -6,7 +6,7 @@ Application web **locale** (FastAPI, ouverte dans le navigateur) pour enregistre
 2. enregistrement audio robuste dans le navigateur (morceaux envoyés au serveur toutes les 30 s), **ou import d'un fichier audio** (téléphone, dictaphone…) ;
 3. sur votre demande (bouton « Lancer le traitement »), transcription **Mistral Voxtral** (diarisation, horodatage, vocabulaire de la matière) puis **dépôt dans Google Drive** de la transcription et des supports de cours ;
 4. une **tâche Claude planifiée** rédige le cours dans Drive ; l'app le **récupère** et l'affiche dans l'onglet Cours, avec le rendu des formules (KaTeX) ;
-5. l'**audio** des séances traitées est **archivé dans Drive** (`Z-Data`) puis supprimé du Mac, au lancement de l'app et chaque soir, pour libérer de l'espace.
+5. l'**audio final** des séances traitées est **archivé dans Drive** (`Z-Data`) puis supprimé du Mac, avec les morceaux bruts de l'enregistrement, au lancement de l'app et chaque soir, pour libérer de l'espace.
 
 Le disque local (`data/`) garde les transcriptions, les cours, les supports et l'audio des séances pas encore traitées (le reste de l'audio est dans Drive, voir §5). Usage personnel, aucune authentification : l'app n'écoute que sur `127.0.0.1`.
 
@@ -121,7 +121,7 @@ La transcription déposée commence par les informations de séance connues de l
 
 ### Archivage de l'audio (Z-Data)
 
-Chaque séance traitée (transcrite et déposée dans Drive) voit son audio **envoyé dans Drive puis supprimé du Mac** :
+Chaque séance traitée (transcrite et déposée dans Drive) voit son **audio final envoyé dans Drive puis supprimé du Mac** :
 
 ```
 Cours M1/
@@ -129,15 +129,15 @@ Cours M1/
     recordings/
       <id de la séance>/      # le numéro affiché dans l'adresse /enregistrements/<id> et dans data/recordings/<id>
         audio.mp3             # l'audio final
-        source.m4a            # le fichier importé, tel quel (séances importées)
-        chunks.zip            # les morceaux bruts reçus du navigateur, regroupés
+        source.m4a            # le fichier importé, tel quel (séances importées uniquement)
 ```
 
 - **Quand** : au lancement de l'app (≈ 15 s après le démarrage), puis **chaque soir** à partir de 21 h tant que l'app est ouverte, et à la demande (**Paramètres → Archivage de l'audio → Archiver maintenant**). Heure, nom du dossier et activation se règlent dans les *Options* de cette carte. Si l'app est fermée le soir, le passage a lieu au prochain lancement.
+- **Morceaux bruts** : les `chunk_XXXX.webm` reçus du navigateur ne sont **pas** envoyés dans Drive : une fois l'audio final vérifié dans Drive, ils sont supprimés du Mac (la transcription ne se sert que de l'audio final). Conséquence : l'assemblage ne peut plus être « refait » depuis l'app pour une séance archivée, mais l'audio final, lui, se restaure. Les morceaux bruts d'une séance non traitée ou dont l'envoi a échoué ne sont jamais supprimés.
 - **Quoi** : seulement les séances **terminées** (transcription faite et déposée) : l'audio d'une séance « Prêt à traiter », en cours ou en erreur reste sur le Mac, la transcription en a besoin. Les transcriptions, supports et cours ne sont **jamais** supprimés du Mac.
 - **Sécurité** : chaque fichier est relu dans Drive (taille et somme MD5 calculées par Google) et comparé à l'original ; la suppression sur le Mac n'a lieu qu'une fois **tous** les fichiers de la séance vérifiés. En cas d'échec (hors ligne, Drive indisponible…), rien n'est supprimé et un nouvel essai a lieu une heure plus tard, puis le soir suivant ou au lancement suivant.
 - **Vos envois à la main** : un `audio.mp3` déjà présent dans `Z-Data/recordings/<id>/` avec exactement le même contenu est simplement reconnu (pas de doublon) ; un fichier de même nom mais différent n'est **jamais écrasé** (la copie s'appelle `audio_2.mp3`).
-- **Retrouver un audio** : sur la fiche d'une séance (Historique), « Restaurer l'audio sur ce Mac » le télécharge (vérifié) ; il reste sur le disque 2 jours avant d'être de nouveau archivé. Relancer la transcription d'une séance archivée rapatrie l'audio tout seul. Les morceaux bruts (`chunks.zip`) et le fichier importé restent dans Drive : l'assemblage ne peut donc plus être « refait » depuis l'app, mais l'audio final est conservé.
+- **Retrouver un audio** : sur la fiche d'une séance (Historique), « Restaurer l'audio sur ce Mac » le télécharge (vérifié) ; il reste sur le disque 2 jours avant d'être de nouveau archivé. Relancer la transcription d'une séance archivée rapatrie l'audio tout seul.
 - **Supprimer une séance dans l'app** ne supprime pas ses fichiers dans Drive.
 
 ### Ce que l'app attend de la tâche Claude
@@ -177,8 +177,8 @@ data/
   app.sqlite3                  # matières, correspondances, enregistrements, statuts, identifiants Drive
   calendar.ics                 # dernier EDT connu
   recordings/<id>/
-    chunk_XXXX.webm            # morceaux bruts reçus du navigateur  ┐
-    source.<ext>               # fichier audio importé (conservé tel quel)  ├ envoyés dans Drive puis supprimés
+    chunk_XXXX.webm            # morceaux bruts reçus du navigateur : supprimés une fois la séance traitée et archivée (§5)
+    source.<ext>               # fichier audio importé (conservé tel quel)  ┐ envoyés dans Drive puis supprimés
     audio.mp3                  # audio final (mono 16 kHz)           ┘ une fois la séance traitée (§5)
     transcript.json / .txt     # transcription brute (segments, locuteurs, horodatage) / lisible
     course.md                  # cours rédigé par la tâche Claude, récupéré depuis Drive
