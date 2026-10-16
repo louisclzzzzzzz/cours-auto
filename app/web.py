@@ -11,7 +11,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import config, db, subjects, version
 from .pipeline import STATUS_LABELS, SUB_LABELS, pipeline
-from .textutils import fmt_duration, fmt_time, fmt_ts, fmt_when, fr_date, fr_short_date
+from .textutils import fmt_duration, fmt_size, fmt_time, fmt_ts, fmt_when, fr_date, fr_short_date
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -31,6 +31,7 @@ templates.env.filters.update(
     fr_date=fr_date,
     fr_short_date=fr_short_date,
     duration=fmt_duration,
+    size=fmt_size,
     hhmm=fmt_time,
     ts=fmt_ts,
     when=fmt_when,

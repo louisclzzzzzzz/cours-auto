@@ -96,7 +96,7 @@ def test_redirect_keeps_anchor_after_message():
 def test_progress_steps_and_retry_action():
     sid = subjects.create_subject("Graphes")
     rid = recorder.create_recording(subject_id=sid, course_type="CM", session_date="2026-09-21")
-    files = {"audio": True, "transcript": False, "course": False}
+    files = {"audio": True, "archived": False, "transcript": False, "course": False}
 
     def steps(**fields):
         db.update_recording(rid, **fields)
@@ -120,6 +120,10 @@ def test_progress_steps_and_retry_action():
     assert steps(status="interrupted")[0] == "warn"
     db.update_recording(rid, status="done")
     assert rec_routes.retry_action(db.get_recording(rid)) is None
+    # Audio archivé dans Drive (plus sur le disque) : l'étape « Audio » reste faite.
+    files.update(audio=False, archived=True)
+    archived = rec_routes.progress_steps(db.get_recording(rid), files)
+    assert archived[0]["state"] == "done" and archived[0]["detail"] == "archivé dans Drive"
 
 
 def test_detail_page_retry_button_and_polling(client):

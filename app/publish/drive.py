@@ -4,8 +4,11 @@ L'app dépose la transcription de chaque séance dans `<Matière>/Transcriptions
 `<Matière>/Supports/`. Une tâche Claude planifiée rédige ensuite le cours dans `<Matière>/Séances/`
 (`AAAA-MM-JJ_CM03_<titre>.md`) ainsi que le cours complet, `_etat.md` et le Google Doc NotebookLM.
 
-Scopes : `drive.file` pour écrire (l'app ne modifie que les fichiers qu'elle a créés, leurs identifiants sont
-stockés en base) et `drive.readonly` pour lire les cours écrits par Claude, que `drive.file` ne voit pas.
+Scope : `drive` (accès complet). Il est nécessaire pour lire les cours écrits par Claude et pour archiver l'audio
+dans le dossier `Z-Data`, créé à la main : avec le seul scope `drive.file`, l'app ne voit ni n'écrit rien de ce
+qu'elle n'a pas créé elle-même. Une connexion plus ancienne (`drive.file` seul, avec ou sans `drive.readonly`)
+continue de déposer les transcriptions ; seul l'archivage de l'audio demande l'accès complet (voir `archive.py`).
+L'app n'efface jamais rien dans Drive : elle ne fait que créer et mettre à jour ses propres dépôts.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ import threading
 import time
 import webbrowser
 import wsgiref.simple_server
+from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs
 
@@ -29,7 +33,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaFileUpload, MediaIoBaseUpload
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload, MediaIoBaseUpload
 
 from .. import config, db, recorder, subjects, supports
 from ..markdown_utils import extract_title
@@ -42,9 +46,10 @@ log = logging.getLogger(__name__)
 os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
 READ_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
-SCOPES = ["https://www.googleapis.com/auth/drive.file", READ_SCOPE]
+FULL_SCOPE = "https://www.googleapis.com/auth/drive"
+SCOPES = [FULL_SCOPE]
 FOLDER_MIME = "application/vnd.google-apps.folder"
-FIELDS = "id, name, webViewLink, mimeType, trashed"
+FIELDS = "id, name, webViewLink, mimeType, trashed, size, md5Checksum"
 
 
 class DriveAuthError(RuntimeError):
@@ -112,11 +117,18 @@ def load_credentials() -> Credentials:
 
 
 def can_read(creds: Credentials) -> bool:
-    return creds.has_scopes([READ_SCOPE]) or creds.has_scopes(["https://www.googleapis.com/auth/drive"])
+    return creds.has_scopes([READ_SCOPE]) or creds.has_scopes([FULL_SCOPE])
 
 
-READ_MISSING = ("Lecture des cours non autorisée : ajoutez le scope …/auth/drive.readonly dans Google Cloud "
-                "(Accès aux données), puis reconnectez Drive dans Paramètres en cochant l'accès à vos fichiers.")
+def can_archive(creds: Credentials) -> bool:
+    """L'archivage écrit dans un dossier créé à la main (`Z-Data`) : il faut l'accès complet à Drive."""
+    return creds.has_scopes([FULL_SCOPE])
+
+
+READ_MISSING = ("Lecture des cours non autorisée : ajoutez le scope …/auth/drive (ou …/auth/drive.readonly) dans "
+                "Google Cloud (Accès aux données), puis reconnectez Drive dans Paramètres en cochant l'accès à vos fichiers.")
+ARCHIVE_MISSING = ("Archivage de l'audio non autorisé : ajoutez le scope …/auth/drive dans Google Cloud (Accès aux "
+                   "données), puis reconnectez Drive dans Paramètres en cochant l'accès à vos fichiers.")
 
 
 def _client_config() -> dict:
@@ -301,7 +313,7 @@ def connection_status(force: bool = False) -> dict:
             client = DriveClient(creds)
             about = client._exec(client.svc.about().get(fields="user"))
             email = about.get("user", {}).get("emailAddress", "")
-            value = {"configured": True, "connected": True, "can_read": can_read(creds),
+            value = {"configured": True, "connected": True, "can_read": can_read(creds), "can_archive": can_archive(creds),
                      "message": f"Connecté ({email})" if email else "Connecté"}
         except (DriveAuthError, PublishSkipped) as exc:
             value = {"configured": True, "connected": False, "message": str(exc)}
@@ -379,6 +391,47 @@ class DriveClient:
             self.svc.files().create(body={"name": name, "parents": [parent_id]}, media_body=media, fields=FIELDS)
         )
 
+    @staticmethod
+    def _quote(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("'", "\\'")
+
+    def find_children(self, parent_id: str, name: str, folder: bool | None = None) -> list[dict]:
+        """Fichiers (`folder=False`) ou dossiers (`folder=True`) de ce nom dans `parent_id`, les plus anciens d'abord.
+        Voit aussi ceux créés à la main : suppose l'accès complet à Drive."""
+        q = f"'{parent_id}' in parents and trashed = false and name = '{self._quote(name)}'"
+        if folder is not None:
+            q += f" and mimeType {'=' if folder else '!='} '{FOLDER_MIME}'"
+        res = self._exec(self.svc.files().list(q=q, pageSize=50, orderBy="createdTime", fields=f"files({FIELDS})"))
+        return res.get("files", [])
+
+    def ensure_named_folder(self, name: str, parent_id: str, cached_id: str | None = None) -> dict:
+        """Dossier `name` dans `parent_id` : celui mémorisé s'il existe encore, sinon un dossier existant de ce nom
+        (créé à la main, par exemple), sinon un nouveau. Ne renomme jamais rien."""
+        cached = self.get(cached_id)
+        if cached and cached.get("name") == name:
+            return cached
+        found = self.find_children(parent_id, name, folder=True)
+        if found:
+            return found[0]
+        return self._exec(self.svc.files().create(
+            body={"name": name, "mimeType": FOLDER_MIME, "parents": [parent_id]}, fields=FIELDS))
+
+    def trash(self, file_id: str) -> None:
+        self._exec(self.svc.files().update(fileId=file_id, body={"trashed": True}, fields="id"))
+
+    def download_to(self, file_id: str, dest: Path) -> None:
+        """Télécharge un fichier (par blocs de 8 Mo) vers `dest`."""
+        request = self.svc.files().get_media(fileId=file_id)
+        with dest.open("wb") as out:
+            downloader = MediaIoBaseDownload(out, request, chunksize=8 * 1024 * 1024)
+            done = False
+            while not done:
+                try:
+                    _, done = downloader.next_chunk(num_retries=5)
+                except HttpError as exc:
+                    raise_friendly(exc)
+                    raise
+
     def list_children(self, folder_id: str) -> list[dict]:
         files: list[dict] = []
         token = None
@@ -397,7 +450,7 @@ class DriveClient:
 
 # --- Dépôt des transcriptions et supports ------------------------------------------------------------
 
-def _root_folder(client: DriveClient) -> dict:
+def root_folder(client: DriveClient) -> dict:
     name = db.get_setting("drive_root_name") or "Cours M1"
     root = client.ensure_folder(name, None, db.get_setting("drive_root_id") or None)
     db.set_setting("drive_root_id", root["id"])
@@ -406,7 +459,7 @@ def _root_folder(client: DriveClient) -> dict:
 
 
 def _subject_folders(client: DriveClient, subject: dict) -> dict:
-    root = _root_folder(client)
+    root = root_folder(client)
     folder = client.ensure_folder(subject["name"], root["id"], subject.get("drive_folder_id"))
     sessions = client.ensure_folder("Séances", folder["id"], subject.get("drive_sessions_folder_id"))
     fields = {
